@@ -1,0 +1,8 @@
+# Simulation mode (works today, no hardware)
+numpy
+sounddevice
+websockets  # browser frontend (python main.py --web)
+
+# Real hardware mode (uncomment when the ESP32 glove is ready)
+# bleak
+# imufusion

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Glove Instrument</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #12141a; --panel: #1c1f28; --line: #2c3040;
+    --text: #e8eaf0; --dim: #8a90a3; --accent: #5eead4; --hot: #f472b6;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; padding: 24px 16px;
+  }
+  header { width: 100%; max-width: 860px; display: flex; align-items: baseline;
+           justify-content: space-between; margin-bottom: 18px; }
+  h1 { font-size: 20px; font-weight: 600; }
+  #conn { font-size: 13px; color: var(--dim); }
+  #conn.ok::before  { content: "● "; color: var(--accent); }
+  #conn.bad::before { content: "● "; color: #ef4444; }
+
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 20px;
+         width: 100%; max-width: 860px; }
+  @media (max-width: 740px) { main { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 14px; padding: 16px; }
+  .label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+           color: var(--dim); margin-bottom: 10px; }
+
+  #pad { width: 100%; aspect-ratio: 1; border-radius: 10px; touch-action: none;
+         background:
+           linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 25%,
+           linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 25% 100%,
+           #171a22;
+         position: relative; cursor: crosshair; }
+  #dot { position: absolute; width: 22px; height: 22px; border-radius: 50%;
+         background: var(--accent); box-shadow: 0 0 18px var(--accent);
+         transform: translate(-50%, -50%); pointer-events: none; }
+  .axis { position: absolute; font-size: 11px; color: var(--dim); }
+
+  .rowlabel { display: flex; justify-content: space-between; font-size: 13px;
+              color: var(--dim); margin: 14px 0 4px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+
+  .btnrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  button {
+    background: #232736; color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 9px 6px; font: inherit; font-size: 14px;
+    cursor: pointer; transition: background .12s, border-color .12s;
+  }
+  button:hover { background: #2b3042; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  button.rec.on { border-color: var(--hot); color: var(--hot); }
+  #punch { width: 100%; margin-top: 10px; padding: 14px; font-size: 16px;
+           background: #2a2333; border-color: #4c3556; }
+  #punch:active { background: var(--hot); color: #12141a; }
+
+  .instruments { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  @media (max-width: 740px) { .instruments { grid-template-columns: repeat(3, 1fr); } }
+  .instruments button { padding: 12px 4px; }
+
+  footer { width: 100%; max-width: 860px; margin-top: 18px; display: flex;
+           gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--dim); }
+  footer b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  #loopinfo { color: var(--accent); }
+  .hint { margin-top: 14px; font-size: 12.5px; color: var(--dim); }
+  kbd { background: #232736; border: 1px solid var(--line); border-radius: 4px;
+        padding: 0 5px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧤 Glove Instrument</h1>
+  <span id="conn" class="bad">connecting…</span>
+</header>
+
+<main>
+  <div class="panel">
+    <div class="label">Hand — drag the pad</div>
+    <div id="pad">
+      <div id="dot" style="left:50%;top:50%"></div>
+      <span class="axis" style="left:6px;top:50%">roll −</span>
+      <span class="axis" style="right:6px;top:50%">roll +</span>
+      <span class="axis" style="left:50%;top:4px">tilt up</span>
+      <span class="axis" style="left:50%;bottom:4px">tilt down</span>
+    </div>
+    <div class="rowlabel"><span>yaw (pan)</span><span id="yawval">0°</span></div>
+    <input id="yaw" type="range" min="-90" max="90" value="0">
+    <div class="rowlabel"><span></span></div>
+    <div class="btnrow" style="grid-template-columns:1fr">
+      <button id="reset">reset hand (r)</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <div class="label">Instrument</div>
+      <div class="instruments" id="instruments">
+        <button data-ins="saw">🪚 Saw</button>
+        <button data-ins="organ">🎹 Organ</button>
+        <button data-ins="strings">🎻 Strings</button>
+        <button data-ins="bell">🔔 Bell</button>
+        <button data-ins="flute">🎶 Flute</button>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="label">Voice &amp; modes</div>
+      <div class="btnrow">
+        <button class="rec" data-ev="record">🎙 record (v)</button>
+        <button class="rec" data-ev="overdub">➕ overdub (o)</button>
+        <button data-ev="loop" id="b-loop">🔁 loop (p)</button>
+        <button data-ev="granular" id="b-granular">✨ granular (g)</button>
+        <button data-ev="slices" id="b-slices">🥁 slices (b)</button>
+        <button data-ev="mute" id="b-drone">🔊 drone (m)</button>
+        <button data-ev="live" id="b-live" class="rec">🎤 live voice (l)</button>
+      </div>
+      <button id="punch">👊 PUNCH (space)</button>
+      <div class="hint">
+        Drag the pad = roll/tilt your hand. <kbd>space</kbd> punch,
+        <kbd>v</kbd> record, <kbd>o</kbd> overdub, <kbd>p</kbd> loop,
+        <kbd>g</kbd> granular, <kbd>b</kbd> slices, <kbd>m</kbd> drone,
+        <kbd>l</kbd> live voice, <kbd>1</kbd>–<kbd>5</kbd> instruments.
+        Live voice: wear headphones, speak, roll = pitch, motion = echo.
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span>roll <b id="s-roll">0</b></span>
+  <span>tilt <b id="s-pitch">0</b></span>
+  <span>yaw <b id="s-yaw">0</b></span>
+  <span>motion <b id="s-motion">0.00</b></span>
+  <span id="loopinfo"></span>
+  <span id="recinfo" style="color:var(--hot)"></span>
+</footer>
+
+<script>
+"use strict";
+let ws = null, connected = false;
+const conn = document.getElementById("conn");
+
+function connect() {
+  ws = new WebSocket("ws://127.0.0.1:8765");
+  ws.onopen = () => { connected = true; conn.textContent = "connected"; conn.className = "ok"; };
+  ws.onclose = () => {
+    connected = false; conn.textContent = "reconnecting…"; conn.className = "bad";
+    setTimeout(connect, 1000);
+  };
+  ws.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch (_) {} };
+}
+connect();
+
+function send(obj) { if (connected) ws.send(JSON.stringify(obj)); }
+function sendEvent(name) { send({ type: "event", name }); }
+
+// ---- hand pose ----------------------------------------------------------
+const pose = { roll: 0, pitch: 0, yaw: 0 };
+let poseDirty = false;
+function setPose(roll, pitch, yaw) {
+  if (roll !== null) pose.roll = Math.max(-90, Math.min(90, roll));
+  if (pitch !== null) pose.pitch = Math.max(-90, Math.min(90, pitch));
+  if (yaw !== null) pose.yaw = Math.max(-90, Math.min(90, yaw));
+  poseDirty = true;
+  dot.style.left = (pose.roll + 90) / 180 * 100 + "%";
+  dot.style.top = (90 - pose.pitch) / 180 * 100 + "%";
+  yawSlider.value = pose.yaw;
+  yawVal.textContent = Math.round(pose.yaw) + "°";
+}
+setInterval(() => { if (poseDirty) { send({ type: "pose", ...pose }); poseDirty = false; } }, 33);
+
+const pad = document.getElementById("pad"), dot = document.getElementById("dot");
+const yawSlider = document.getElementById("yaw"), yawVal = document.getElementById("yawval");
+let dragging = false;
+function padPose(ev) {
+  const r = pad.getBoundingClientRect();
+  const x = (ev.clientX - r.left) / r.width, y = (ev.clientY - r.top) / r.height;
+  setPose(x * 180 - 90, 90 - y * 180, null);
+}
+pad.addEventListener("pointerdown", (e) => { dragging = true; pad.setPointerCapture(e.pointerId); padPose(e); });
+pad.addEventListener("pointermove", (e) => { if (dragging) padPose(e); });
+pad.addEventListener("pointerup", () => { dragging = false; });
+yawSlider.addEventListener("input", () => setPose(null, null, +yawSlider.value));
+document.getElementById("reset").onclick = () => setPose(0, 0, 0);
+
+// ---- buttons ------------------------------------------------------------
+document.querySelectorAll("[data-ev]").forEach((b) => (b.onclick = () => sendEvent(b.dataset.ev)));
+document.querySelectorAll("[data-ins]").forEach((b) => (b.onclick = () => sendEvent("instrument:" + b.dataset.ins)));
+document.getElementById("punch").onclick = () => sendEvent("punch");
+
+const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live" };
+const INS = ["saw", "organ", "strings", "bell", "flute"];
+document.addEventListener("keydown", (e) => {
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (KEYS[k]) { sendEvent(KEYS[k]); e.preventDefault(); }
+  else if (k >= "1" && k <= "5") sendEvent("instrument:" + INS[+k - 1]);
+  else if (k === "r") setPose(0, 0, 0);
+});
+
+// ---- state from Python --------------------------------------------------
+const $ = (id) => document.getElementById(id);
+let padLabelled = false;
+function render(s) {
+  if (!s || s.roll === undefined) return;
+  // Hardware glove connected: the pad mirrors the real hand (unless the
+  // user is dragging it, which would fight the incoming data).
+  if (s.hardware && !dragging) {
+    dot.style.left = (Math.max(-90, Math.min(90, s.roll)) + 90) / 180 * 100 + "%";
+    dot.style.top = (90 - Math.max(-90, Math.min(90, s.pitch))) / 180 * 100 + "%";
+    yawSlider.value = Math.max(-90, Math.min(90, s.yaw));
+    yawVal.textContent = Math.round(s.yaw) + "°";
+    if (!padLabelled) {
+      document.querySelector(".label").textContent = "Hand — live from glove 🧤";
+      padLabelled = true;
+    }
+  }
+  $("s-roll").textContent = s.roll.toFixed(0) + "°";
+  $("s-pitch").textContent = s.pitch.toFixed(0) + "°";
+  $("s-yaw").textContent = s.yaw.toFixed(0) + "°";
+  $("s-motion").textContent = s.motion.toFixed(2);
+  $("b-loop").classList.toggle("on", !!s.loop);
+  $("b-granular").classList.toggle("on", !!s.granular);
+  $("b-slices").classList.toggle("on", !!s.slices);
+  $("b-drone").classList.toggle("on", !!s.drone);
+  $("b-live").classList.toggle("on", !!s.live);
+  document.querySelector("[data-ev=record]").classList.toggle("on", !!s.recording);
+  document.querySelectorAll("[data-ins]").forEach((b) =>
+    b.classList.toggle("on", b.dataset.ins === s.instrument));
+  $("loopinfo").textContent = s.loop_secs ? "loop: " + s.loop_secs.toFixed(1) + "s" : "no loop yet";
+  $("recinfo").textContent = s.recording ? "● REC" : "";
+}
+</script>
+</body>
+</html>
