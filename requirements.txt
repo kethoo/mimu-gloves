@@ -1,8 +1,7 @@
-# Simulation mode (works today, no hardware)
 numpy
-sounddevice
-websockets  # browser frontend (python main.py --web)
+sounddevice   # real-time duplex audio via PortAudio
+websockets    # browser frontend (python main.py --web)
+bleak         # Bluetooth LE: --ble, --scan, diagnose.py
 
-# Real hardware mode (uncomment when the ESP32 glove is ready)
-# bleak
-# imufusion
+# No fusion library (e.g. imufusion) is needed: the BNO08x fuses on-chip
+# and sends finished orientation.

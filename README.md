@@ -1,9 +1,10 @@
 # MiMu-Style Gesture Glove — Simulation & Instrument
 
-A hand-motion musical instrument, inspired by MiMu gloves. An ESP32 with an
-IMU streams hand orientation over Bluetooth LE; the laptop maps gestures to a
-real-time synthesizer. Until the hardware exists, a keyboard simulator stands
-in for the glove.
+A hand-motion musical instrument, inspired by MiMu gloves. An ESP32 with a
+BNO08x IMU streams hand orientation over Bluetooth LE; the laptop maps
+gestures to a real-time synthesizer. A keyboard simulator and a browser
+frontend stand in for the glove, so every feature can be built and tested
+with no hardware attached.
 
 ## Quick start (no hardware needed)
 
@@ -34,15 +35,22 @@ a comfortable wrist, not the ±90° the sensor can report — mapping against 90
 leaves most of the musical range unreachable in practice. Lower them for a
 twitchier instrument, raise them for finer control.
 
-**Values changing while the board sits still?** That is the firmware's test
-pattern, which runs whenever the ESP32 can't find the BNO08x at boot: it
-sweeps roll ±60° and pitch ±40° on a timer while hardcoding yaw and linear
-acceleration to exactly 0. `ble_receiver.py` detects those exact zeros and
-prints a warning, and the ESP32 labels every serial heartbeat `SENSOR` or
-`TEST`. The cause is almost always wiring, not code — check VCC/GND/SDA(21)/
-SCL(22) and especially **RST(GPIO4)**, since a floating reset pin holds the
-sensor in reset and makes it invisible on I2C. The boot-time I2C scan should
-list `0x4B`.
+**Nothing responding to your hand?** The firmware never fabricates motion.
+If the ESP32 cannot see the BNO08x it sends a status flag of 0 and no
+orientation at all, and `ble_receiver.py` says so plainly instead of feeding
+placeholder values to the synth:
+
+```
+[!! The ESP32 cannot see the BNO08x — no motion data is being produced.]
+```
+
+It retries the sensor every 3 s and prints `[sensor recovered — playing real
+motion]` when it comes back. Over serial, each heartbeat line is labelled
+`SENSOR` (live) or `NO-IMU!`, and the boot-time I2C scan should list `0x4B`.
+
+(An earlier build streamed a synthetic "waving hand" when the sensor was
+missing, so the instrument could be tested before the hardware arrived. It
+was removed — convincing fake data is worse than silence.)
 
 ## Instruments
 
@@ -68,14 +76,14 @@ chain — add your own recipe in `GloveSynth._render_tone`.
 Press `v` to record from the microphone, `v` again to stop — the take
 immediately starts looping through the gesture chain: roll left/right slows
 down/speeds up the voice (with pitch shift), tilt darkens/brightens it, yaw
-pans it, and motion controls its volume. `p` pauses the loop, `m` mutes the
-drone tone so you hear the voice alone. On the hardware glove this becomes a
+pans it, and flex — or motion, with no flex sensor — controls its volume.
+`p` pauses the loop, `m` mutes the drone tone so you hear the voice alone. On the hardware glove this becomes a
 physical record button (a press edge sent in the BLE packet — hook noted in
 `ble_receiver.py`). macOS will ask for microphone permission the first time.
 
 Button-like gestures travel as an **event queue** (`GloveSource.events`),
-separate from the continuous 100 Hz orientation stream, so a press is never
-missed or applied twice.
+separate from the continuous orientation stream, so a press is never missed
+or applied twice.
 
 ## Live voice mode (`l`)
 
@@ -101,15 +109,15 @@ the pitched-up output re-enters the mic and feeds back.
 ## Architecture
 
 ```
-ESP32 + MPU6050 ──BLE notify, 100 Hz──> ble_receiver.py ─┐
+ESP32 + BNO08x ──BLE notify, 50 Hz───> ble_receiver.py ──┐
                                                           ├─> SensorFrame ─> mapping.py ─> synth.py ─> speakers
 keyboard / demo script ────────────────> sensors.py ─────┘        (100 Hz control rate)    (44.1 kHz audio rate)
 ```
 
-Two clock rates, on purpose: hand data is processed at ~100 Hz (smoothing,
-fusion, mapping), while `synth.py` renders audio at 44.1 kHz inside a
-PortAudio callback with per-sample parameter smoothing, so control updates
-never click. End-to-end latency is roughly 10–20 ms.
+Two clock rates, on purpose: the glove streams at 50 Hz and the control loop
+runs at 100 Hz (zeroing, smoothing, mapping), while `synth.py` renders audio
+at 44.1 kHz inside a PortAudio callback with per-sample parameter smoothing,
+so control updates never click. End-to-end latency is roughly 10–20 ms.
 
 The simulator (`sensors.py`) and the BLE receiver (`ble_receiver.py`) emit
 identical `SensorFrame` objects, so switching to real hardware is just
@@ -148,9 +156,13 @@ which is the quickest way to check the sensor and pick a divider resistor.
 python diagnose.py   # live health monitor; Ctrl+C for a dropout timeline
 ```
 
-Prints per-second sensor status and movement, and announces the instant the
-BNO08x drops out or returns. Wiggle one wire at a time; whatever you touched
-when a dropout appears is the bad connection. Prime suspect is RST→GPIO4.
+Prints per-second sensor status, flex ADC value and movement, and announces
+the instant the BNO08x drops out or returns.
+
+**Suspect bus speed before wiring.** Recurring dropouts here turned out to be
+the 400 kHz I2C clock, not a loose jumper — see the stall trap below. At
+100 kHz the connection held indefinitely. Only if dropouts persist is it
+worth wiggling one wire at a time to find a bad contact.
 
 The flex sensor cannot electrically disturb the IMU — it draws ~55 µA through
 the 47k divider, GPIO34 is on ADC1 (independent of the radio), and it shares
@@ -169,9 +181,17 @@ Flash with `UploadSpeed=115200` — the USB adapter fails at the default
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32 esp32/glove_ble
-arduino-cli upload -p /dev/cu.usbserial-10 \
+arduino-cli upload -p "$(ls /dev/cu.usbserial-* | head -1)" \
   --fqbn esp32:esp32:esp32:UploadSpeed=115200 esp32/glove_ble
 ```
+
+macOS renames the port on each replug (`usbserial-10`, `-110`, …), hence the
+`ls` rather than a fixed path.
+
+The glove sends 32-byte packets at 50 Hz: `roll, pitch, yaw` (degrees),
+`lax, lay, laz` (m/s², gravity removed), `status` (1 = live sensor, 0 = not
+detected) and `flex` (raw ADC 0–4095). `ble_receiver.py` also accepts the
+older 28- and 24-byte layouts.
 
 **The BNO08x stall trap.** The sensor's SHTP transport can wedge: reports
 stop, and it keeps ACKing its I2C address while refusing to re-initialize
@@ -211,7 +231,10 @@ the pose from the glove and merges control events from both.
 
 ## Libraries used
 
-- **sounddevice** — PortAudio bindings, real-time audio output
+- **sounddevice** — PortAudio bindings, real-time duplex audio (mic + speakers)
 - **numpy** — block-wise DSP in the audio callback
-- **bleak** (hardware mode) — cross-platform Bluetooth LE client
-- **imufusion** (hardware mode) — Madgwick AHRS sensor fusion
+- **websockets** — browser frontend transport (`--web`)
+- **bleak** — Bluetooth LE client (`--ble`, `--scan`, `diagnose.py`)
+
+No sensor-fusion library is needed: the BNO08x fuses on-chip and sends
+finished orientation, so the laptop only zeroes and smooths it.
