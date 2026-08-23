@@ -27,10 +27,13 @@ import asyncio
 import struct
 import time
 
+import numpy as np
+
 from sensors import GloveSource, SensorFrame
 
 SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+AUDIO_UUID = "6e400004-b5a3-f393-e0a9-e50e24dcca9e"
 DEVICE_NAME = "MIMU-GLOVE"
 
 BASELINE_PACKETS = 80    # ~0.8 s of "hold still" used as the zero pose
@@ -51,6 +54,37 @@ def _wrap(deg: float) -> float:
     return (deg + 180.0) % 360.0 - 180.0
 
 
+class _FlexChannel:
+    """Self-calibrating flex input, one per finger.
+
+    The usable ADC range depends on the sensor, the divider resistor and how
+    tightly it is taped to the finger, so the range widens as you bend rather
+    than being hardcoded. Until it has seen a real swing it reports None,
+    which the mapping treats as "no sensor" instead of guessing.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.lo = float("inf")
+        self.hi = float("-inf")
+        self.ready = False
+
+    def update(self, raw):
+        if raw is None:
+            return None
+        self.lo = min(self.lo, raw)
+        self.hi = max(self.hi, raw)
+        span = self.hi - self.lo
+        if span < FLEX_MIN_SPAN:
+            return None
+        u = (raw - self.lo) / span
+        if not self.ready:
+            self.ready = True
+            print(f"\n[{self.name} detected — range {self.lo:.0f}..{self.hi:.0f}]")
+        # Bending raises the sensor's resistance, pulling the divider down.
+        return 1.0 - u if FLEX_INVERT else u
+
+
 class BleGloveSource(GloveSource):
     def __init__(self) -> None:
         super().__init__()
@@ -66,9 +100,12 @@ class BleGloveSource(GloveSource):
         self._warned_frozen = False
         self._testpattern_hits = 0
         self._warned_testpattern = False
-        self._flex_min = float("inf")
-        self._flex_max = float("-inf")
-        self._flex_ready = False
+        self._flex = _FlexChannel("flex sensor 1")
+        self._flex2 = _FlexChannel("flex sensor 2")
+        # Audio arriving from the glove's own microphone.
+        self._audio_expected = 0
+        self._audio_rate = 16000
+        self._audio_parts: list[bytes] = []
 
     def _run(self) -> None:
         asyncio.run(self._ble_loop())
@@ -104,6 +141,7 @@ class BleGloveSource(GloveSource):
                         "Hold the glove still to calibrate..."
                     )
                     await client.start_notify(CHAR_UUID, self._on_packet)
+                    await client.start_notify(AUDIO_UUID, self._on_audio)
                     while self._running and client.is_connected:
                         await asyncio.sleep(0.2)
             except Exception as exc:  # dropped mid-transfer, adapter busy, ...
@@ -112,6 +150,33 @@ class BleGloveSource(GloveSource):
                 print("\n[glove disconnected — reconnecting...]")
                 await asyncio.sleep(1.0)
         self.quit_requested = True
+
+    def _on_audio(self, _handle, data: bytearray) -> None:
+        """Reassemble a take from the glove: a 12-byte header, then raw
+        little-endian int16 samples."""
+        if not self._audio_expected and len(data) >= 12 and data[:4] == b"AUD0":
+            n, rate = struct.unpack("<II", bytes(data[4:12]))
+            self._audio_expected = n * 2
+            self._audio_rate = rate
+            self._audio_parts = []
+            print(f"\n[glove recording: {n / rate:.1f}s incoming...]")
+            return
+        if not self._audio_expected:
+            return
+        self._audio_parts.append(bytes(data))
+        if sum(len(p) for p in self._audio_parts) < self._audio_expected:
+            return
+
+        raw = b"".join(self._audio_parts)[: self._audio_expected]
+        self._audio_expected = 0
+        samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+        peak = float(np.abs(samples).max()) if len(samples) else 0.0
+        if peak < 0.005:
+            print("[glove recording was silent — discarded]")
+            return
+        self.audio = (samples, self._audio_rate)
+        print(f"[glove recording received: {len(samples) / self._audio_rate:.1f}s, "
+              f"peak {peak:.2f} — now playing as the loop]")
 
     def _reset_pose_calibration(self) -> None:
         """Forget the neutral pose so the next packets re-establish it.
@@ -122,9 +187,12 @@ class BleGloveSource(GloveSource):
         self._prev = (0.0, 0.0, 0.0)
 
     def _on_packet(self, _handle, data: bytearray) -> None:
-        # 32 bytes = current firmware (status + flex); 28 and 24 are older.
-        flex_raw = None
-        if len(data) == 32:
+        # 36 bytes = current firmware (status + two flex); 32/28/24 are older.
+        flex_raw = flex2_raw = None
+        if len(data) == 36:
+            (roll, pitch, yaw, lax, lay, laz,
+             status, flex_raw, flex2_raw) = struct.unpack("<9f", data)
+        elif len(data) == 32:
             roll, pitch, yaw, lax, lay, laz, status, flex_raw = struct.unpack("<8f", data)
         elif len(data) == 28:
             roll, pitch, yaw, lax, lay, laz, status = struct.unpack("<7f", data)
@@ -210,28 +278,8 @@ class BleGloveSource(GloveSource):
 
         motion = min(speed / 400.0 + accel_mag / 30.0, 1.5)
         self.latest = SensorFrame(
-            roll=r, pitch=p, yaw=y, motion=motion, flex=self._flex(flex_raw)
+            roll=r, pitch=p, yaw=y, motion=motion,
+            flex=self._flex.update(flex_raw),
+            flex2=self._flex2.update(flex2_raw),
         )
 
-    def _flex(self, raw: float | None) -> float | None:
-        """Normalize the flex ADC to 0..1 (0 straight, 1 fully bent).
-
-        The usable range depends on the sensor, the divider resistor and how
-        it is taped to the finger, so it self-calibrates: the observed min and
-        max expand as you bend. Until it has seen a real span it reports None,
-        which the mapping treats as "no flex sensor" rather than guessing.
-        """
-        if raw is None:
-            return None
-        self._flex_min = min(self._flex_min, raw)
-        self._flex_max = max(self._flex_max, raw)
-        span = self._flex_max - self._flex_min
-        if span < FLEX_MIN_SPAN:
-            return None
-        u = (raw - self._flex_min) / span
-        if not self._flex_ready:
-            self._flex_ready = True
-            print(f"\n[flex sensor detected — range {self._flex_min:.0f}..{self._flex_max:.0f}]")
-        # Bending raises the flex sensor's resistance, which pulls the divider
-        # voltage DOWN, so invert to get "bent = 1".
-        return 1.0 - u if FLEX_INVERT else u

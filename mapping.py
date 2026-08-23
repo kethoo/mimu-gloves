@@ -9,7 +9,8 @@ This is the file you will tweak the most. Current mapping:
   pitch  -> brightness (filter cutoff): hand up = bright, hand down = dark
             (shapes the voice too — it runs through the same filter)
   yaw    -> stereo pan: point left = sound left
-  flex   -> volume/expression: bend the finger to swell the note
+  flex   -> volume/expression: bend the first finger to swell the note
+  flex2  -> vibrato depth: bend the second finger to make the note wobble
   motion -> volume swell, but only when no flex sensor is connected
 
 Discrete gesture/button events (see handle_event):
@@ -78,6 +79,10 @@ def apply(frame: SensorFrame, synth: GloveSynth) -> None:
 
     # motion -> echo trails on the live voice: wave your hand, it rings
     synth.target_echo = 0.15 + 0.55 * min(frame.motion, 1.0)
+
+    # Second finger -> vibrato depth. Chosen because it adds expression the
+    # wrist cannot: roll already steps the pitch, this wobbles it.
+    synth.target_vibrato = frame.flex2 if frame.flex2 is not None else 0.0
 
 
 def handle_event(event: str, synth: GloveSynth) -> None:

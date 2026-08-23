@@ -106,6 +106,9 @@ def main() -> None:
             mapping.apply(frame, synth)
             for event in source.drain_events():
                 mapping.handle_event(event, synth)
+            take = source.take_audio()
+            if take is not None:
+                synth.set_loop(*take)
             publish = getattr(source, "publish", None)
             if publish is not None:
                 publish({
@@ -117,14 +120,20 @@ def main() -> None:
                     "recording": synth.is_recording,
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,
+                    "flex": frame.flex, "flex2": frame.flex2,
                     # Tells the UI the pose comes from the real glove, so it
                     # mirrors the hand instead of waiting to be dragged.
                     "hardware": "--ble" in sys.argv,
                 })
             if not isinstance(source, DemoGloveSource):
+                def _f(v):
+                    return f"{v:4.2f}" if v is not None else "  - "
+
                 print(
                     f"\rroll {frame.roll:+6.1f}  pitch {frame.pitch:+6.1f}  "
-                    f"yaw {frame.yaw:+6.1f}  motion {frame.motion:4.2f}   ",
+                    f"yaw {frame.yaw:+6.1f}  motion {frame.motion:4.2f}  "
+                    f"flex1 {_f(frame.flex)} (volume)  "
+                    f"flex2 {_f(frame.flex2)} (vibrato)   ",
                     end="",
                     flush=True,
                 )

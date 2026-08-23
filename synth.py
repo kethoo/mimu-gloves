@@ -16,6 +16,10 @@ BLOCK = 256  # ~6 ms of audio per callback
 GRAIN_LEN = int(0.09 * SAMPLE_RATE)   # granular mode: 90 ms grains...
 GRAIN_HOP = int(0.045 * SAMPLE_RATE)  # ...spawned every 45 ms (2x overlap)
 N_SLICES = 4                          # slice mode: recording split into 4 pads
+VIBRATO_HZ = 5.5                      # wobble speed, roughly a singer's
+VIBRATO_DEPTH = 0.02                  # max pitch swing (+/-2%, ~a third of
+                                      # a semitone). Raise for a seasick
+                                      # effect, lower for a subtle one.
 
 PS_BUF = 1 << 16                     # live voice: ring buffer (~1.5 s)
 PS_WIN = 2048                        # pitch-shifter tap window (~46 ms)
@@ -40,6 +44,7 @@ class GloveSynth:
         self.target_amp = 0.25       # 0..1
         self.target_rate = 1.0       # voice-loop playback speed (0.5..2)
         self.target_scrub = 0.5      # granular position / slice selector, 0..1
+        self.target_vibrato = 0.0    # pitch wobble depth, 0..1 (second finger)
 
         # Smoothed values owned by the audio callback.
         self._freq = self.target_freq
@@ -51,6 +56,8 @@ class GloveSynth:
         self.instrument = "saw"
         self._ph = [0.0, 0.0, 0.0, 0.0]  # phase accumulators (osc + partials)
         self._lfo = 0.0           # vibrato LFO phase (flute)
+        self._vib = 0.0           # vibrato LFO phase (finger-controlled)
+        self._vibDepth = 0.0      # smoothed depth
         self._lp = 0.0            # one-pole lowpass state
         self._pluck_env = 0.0     # decaying envelope for percussive hits
         self._pluck_lp = 0.0
@@ -216,6 +223,32 @@ class GloveSynth:
             self._shot = None
             self.loop_on = True
             print(f"\n[{len(take) / SAMPLE_RATE:.1f}s recorded — looping; move your hand to shape it]")
+
+    def set_loop(self, samples, rate: int) -> None:
+        """Install a recording made elsewhere (the glove's own mic) as the
+        voice loop, resampled to the audio engine's rate. Everything
+        downstream — pitch, granular, slices, overdub — then works on it
+        exactly as it does on a laptop-recorded take."""
+        samples = np.asarray(samples, dtype=np.float64)
+        if len(samples) < 2:
+            return
+        if rate != SAMPLE_RATE:
+            n_out = int(len(samples) * SAMPLE_RATE / rate)
+            samples = np.interp(
+                np.linspace(0.0, len(samples) - 1, n_out),
+                np.arange(len(samples)),
+                samples,
+            )
+        peak = float(np.abs(samples).max())
+        if peak > 1e-4:
+            samples = samples * min(0.5 / peak, 40.0)
+        self.loop_on = False           # keep the callback off the buffer
+        self._loop_buf = samples
+        self._loop_pos = 0.0
+        self._grains = []
+        self._shot = None
+        self.loop_on = True
+        print(f"\n[glove take loaded — {len(samples) / SAMPLE_RATE:.1f}s looping]")
 
     def toggle_granular(self) -> None:
         self.granular_on = not self.granular_on
@@ -408,9 +441,18 @@ class GloveSynth:
         accumulators for the fundamental and extra partials so pitch changes
         stay click-free.
         """
-        inc = self._freq / SAMPLE_RATE
+        # Vibrato: the second finger wobbles the pitch, like a singer or a
+        # string player. Applied to the increment so every instrument gets it.
+        self._vibDepth += (self.target_vibrato - self._vibDepth) * 0.1
         n = np.arange(frames)
         two_pi = 2.0 * np.pi
+        if self._vibDepth > 1e-3:
+            lfo = np.sin(two_pi * (self._vib + VIBRATO_HZ / SAMPLE_RATE * n)).mean()
+            self._vib = float((self._vib + VIBRATO_HZ * frames / SAMPLE_RATE) % 1.0)
+            freq = self._freq * (1.0 + VIBRATO_DEPTH * self._vibDepth * lfo)
+        else:
+            freq = self._freq
+        inc = freq / SAMPLE_RATE
 
         def ph(k: int, mult: float = 1.0) -> np.ndarray:
             p = (self._ph[k] + inc * mult * n) % 1.0

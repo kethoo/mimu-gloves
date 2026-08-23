@@ -24,15 +24,24 @@ class Health:
     def __init__(self) -> None:
         self.window: list[tuple[float, float, float]] = []
         self.flex_window: list[float] = []
+        self.flex2_window: list[float] = []
         self.flex_seen_min = float("inf")
         self.flex_seen_max = float("-inf")
+        self.flex2_seen_min = float("inf")
+        self.flex2_seen_max = float("-inf")
         self.packets = 0
         self.live = None          # None = unknown yet
         self.events: list[str] = []
         self.last_packet = 0.0
 
     def on_packet(self, _handle, data: bytearray) -> None:
-        if len(data) == 32:
+        if len(data) == 36:
+            (roll, pitch, yaw, _lax, _lay, _laz,
+             status, flex, flex2) = struct.unpack("<9f", data)
+            live = status >= 0.5
+            self.flex_window.append(flex)
+            self.flex2_window.append(flex2)
+        elif len(data) == 32:
             roll, pitch, yaw, _lax, _lay, _laz, status, flex = struct.unpack("<8f", data)
             live = status >= 0.5
             self.flex_window.append(flex)
@@ -76,20 +85,26 @@ async def main() -> None:
             "Prime suspects: RST->GPIO4, then 3V3, GND, SDA->21, SCL->22.\n"
             "Ctrl+C to stop.\n"
         )
-        print(f"{'time':<10} {'status':<12} {'pkts/s':>7}  {'flex ADC':<18} movement (deg/s)")
+        print(f"{'time':<10} {'status':<12} {'pkts/s':>7}  {'flex1/flex2':<14} movement (deg/s)")
         print("-" * 84)
         try:
             while client.is_connected:
                 before = h.packets
                 h.window.clear()
                 h.flex_window.clear()
+                h.flex2_window.clear()
                 await asyncio.sleep(1.0)
                 rate = h.packets - before
                 if h.flex_window:
                     lo, hi = min(h.flex_window), max(h.flex_window)
                     h.flex_seen_min = min(h.flex_seen_min, lo)
                     h.flex_seen_max = max(h.flex_seen_max, hi)
-                    flex = f"{lo:4.0f} (all {h.flex_seen_min:.0f}-{h.flex_seen_max:.0f})"
+                    flex = f"{lo:4.0f}"
+                    if h.flex2_window:
+                        lo2, hi2 = min(h.flex2_window), max(h.flex2_window)
+                        h.flex2_seen_min = min(h.flex2_seen_min, lo2)
+                        h.flex2_seen_max = max(h.flex2_seen_max, hi2)
+                        flex += f"/{lo2:4.0f}"
                 else:
                     flex = "-"
                 if h.window:
@@ -99,37 +114,34 @@ async def main() -> None:
                 else:
                     move = "-"
                     status = "NO SENSOR" if h.live is False else "no data"
-                print(f"{time.strftime('%H:%M:%S'):<10} {status:<12} {rate:>7}  {flex:<18} {move}")
+                print(f"{time.strftime('%H:%M:%S'):<10} {status:<12} {rate:>7}  {flex:<14} {move}")
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
 
     print("\n--- summary ---")
     print(f"total packets: {h.packets}")
-    if h.flex_seen_max >= h.flex_seen_min:
-        lo, hi = h.flex_seen_min, h.flex_seen_max
+    for label, pin, lo, hi in (("flex 1", "GPIO34", h.flex_seen_min, h.flex_seen_max),
+                               ("flex 2", "GPIO35", h.flex2_seen_min, h.flex2_seen_max)):
+        if hi < lo:
+            continue
         span = hi - lo
-        print(f"flex ADC range seen: {lo:.0f}..{hi:.0f} (span {span:.0f})")
-        # The divider is 3V3 -> flex -> GPIO34 -> 47k -> GND, so the resting
-        # value alone says which leg is broken.
+        print(f"\n{label} ({pin}): range {lo:.0f}..{hi:.0f}, span {span:.0f}")
+        # Divider is 3V3 -> flex -> pin -> 47k -> GND, so the resting value
+        # alone says which leg is broken.
         if hi < 100:
-            print(
-                "  -> STUCK AT 0: nothing is pulling GPIO34 up. The flex sensor is\n"
-                "     not connected — check its 3V3 leg and the leg into GPIO34.\n"
-                "     (The 47k pulldown is clearly fine; it is holding the pin at 0.)"
-            )
+            print(f"  -> STUCK AT 0: nothing is pulling {pin} up. Check the 3V3 leg\n"
+                  f"     and the leg into {pin}. (The 47k pulldown is clearly fine —\n"
+                  f"     it is what is holding the pin at 0.)")
         elif lo > 4000:
-            print(
-                "  -> STUCK AT MAX: GPIO34 is sitting at 3.3V. The 47k pulldown to\n"
-                "     GND is missing or disconnected."
-            )
+            print(f"  -> STUCK AT MAX: {pin} sits at 3.3V. The 47k pulldown to GND\n"
+                  f"     is missing or disconnected.")
         elif span < 150:
-            print(
-                "  -> CONNECTED but not swinging: the divider works, yet bending does\n"
-                "     not change it. Either the bend is not reaching the resistive\n"
-                "     strip (check which side is mounted), or the sensor is damaged."
-            )
+            print("  -> CONNECTED but not swinging: the divider works, yet bending\n"
+                  "     does not change it. Either the bend is not reaching the\n"
+                  "     resistive strip, or the sensor is damaged.")
         else:
-            print("  -> good swing; the flex sensor is usable as a control.")
+            print("  -> good swing; usable as a control.")
+    print()
     if h.events:
         print("dropout timeline:")
         for e in h.events:

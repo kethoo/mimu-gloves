@@ -137,6 +137,8 @@
   <span>tilt <b id="s-pitch">0</b></span>
   <span>yaw <b id="s-yaw">0</b></span>
   <span>motion <b id="s-motion">0.00</b></span>
+  <span>flex1 <b id="s-flex">–</b></span>
+  <span>flex2 <b id="s-flex2">–</b></span>
   <span id="loopinfo"></span>
   <span id="recinfo" style="color:var(--hot)"></span>
 </footer>
@@ -225,6 +227,8 @@ function render(s) {
   $("s-pitch").textContent = s.pitch.toFixed(0) + "°";
   $("s-yaw").textContent = s.yaw.toFixed(0) + "°";
   $("s-motion").textContent = s.motion.toFixed(2);
+  $("s-flex").textContent = s.flex == null ? "–" : s.flex.toFixed(2);
+  $("s-flex2").textContent = s.flex2 == null ? "–" : s.flex2.toFixed(2);
   $("b-loop").classList.toggle("on", !!s.loop);
   $("b-granular").classList.toggle("on", !!s.granular);
   $("b-slices").classList.toggle("on", !!s.slices);

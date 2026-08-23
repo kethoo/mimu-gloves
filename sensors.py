@@ -27,8 +27,9 @@ class SensorFrame:
     pitch:  tilt up/down, degrees (-90 pointing down .. +90 pointing up)
     yaw:    heading left/right, degrees (-90 .. +90)
     motion: overall movement intensity, 0.0 (still) .. 1.0+ (shaking)
-    flex:   finger bend, 0.0 (straight) .. 1.0 (fully bent), or None if the
-            glove has no working flex sensor
+    flex:   first finger bend, 0.0 (straight) .. 1.0 (fully bent), or None
+            if that sensor is missing
+    flex2:  second finger bend, same scale, or None
     """
 
     roll: float = 0.0
@@ -36,6 +37,7 @@ class SensorFrame:
     yaw: float = 0.0
     motion: float = 0.0
     flex: float | None = None
+    flex2: float | None = None
     t: float = field(default_factory=time.monotonic)
 
 
@@ -51,6 +53,10 @@ class GloveSource:
     def __init__(self) -> None:
         self.latest = SensorFrame()
         self.events: deque[str] = deque()
+        # A recording captured on the glove itself, as (samples, rate), waiting
+        # to be collected. Same idea as the event queue: produced here, taken
+        # exactly once by whoever is driving the synth.
+        self.audio: tuple = None
         self._running = False
 
     def drain_events(self) -> list[str]:
@@ -60,6 +66,11 @@ class GloveSource:
                 out.append(self.events.popleft())
             except IndexError:
                 return out
+
+    def take_audio(self):
+        """Collect a pending glove recording, or None. Clears it."""
+        audio, self.audio = self.audio, None
+        return audio
 
     def _smooth_toward_target(self, rate: int) -> None:
         """Chase self._target with a first-order lag (real hands don't
@@ -138,6 +149,9 @@ class MergedGloveSource(GloveSource):
             self.latest = self.pose.latest
             for source in (self.pose, self.control):
                 self.events.extend(source.drain_events())
+                got = source.take_audio()
+                if got is not None:
+                    self.audio = got
             time.sleep(dt)
 
 
