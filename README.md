@@ -67,11 +67,40 @@ chain — add your own recipe in `GloveSynth._render_tone`.
 | Roll wrist left/right | roll        | Musical pitch (A-minor pentatonic) + voice-loop speed |
 | Tilt hand up/down   | pitch         | Brightness (lowpass filter cutoff)    |
 | Point left/right    | yaw           | Stereo pan                            |
-| Bend the finger     | flex          | Volume / expression (like a breath controller) |
+| Bend finger 1       | flex (GPIO34) | Volume / expression, like a breath controller |
+| Bend finger 2       | flex2 (GPIO35)| Vibrato depth — the note wobbles like a singer |
 | Move faster         | motion        | Volume swells — only when no flex sensor is connected |
 | Punch               | accel spike   | Percussive drum hit                   |
+| Hold the button     | GPIO18        | Records your voice on the glove (see below) |
 
-## Voice looping (mic in, gestures shape it)
+## Recording on the glove (button + INMP441)
+
+Hold the glove's button, speak into the microphone on your hand, release.
+The ESP32 records to its own memory (LED solid), transfers the take over
+Bluetooth (LED slow blink), and it becomes the voice loop:
+
+```
+[glove recording: 2.1s incoming...]
+[glove recording received: 2.1s, peak 0.43 — now playing as the loop]
+```
+
+From there every voice feature already works on it — roll changes speed and
+pitch, tilt filters it, granular freezes it, slices chop it into drum pads,
+overdub layers on top. The glove take just fills the same buffer a laptop
+recording does.
+
+This works because a recording tolerates delay in a way live monitoring
+cannot: Bluetooth is far too slow to carry live audio (~32 kB/s for 16 kHz
+against a link that manages a fraction of that, plus buffering latency), but
+a finished take only has to *arrive*. Capture on the glove, transfer
+afterwards, play on the laptop.
+
+Takes are up to 8 seconds, held in the module's PSRAM — internal RAM has no
+room for the buffer beside the BLE stack. Without PSRAM it falls back to 2
+seconds. `mapping.py`'s `record` event still drives the laptop microphone,
+which is unchanged and lower latency for the live modes.
+
+## Voice looping (laptop mic, gestures shape it)
 
 Press `v` to record from the microphone, `v` again to stop — the take
 immediately starts looping through the gesture chain: roll left/right slows
@@ -135,10 +164,24 @@ one program may hold the connection at a time.
 python main.py --scan   # list BLE devices and confirm the glove is advertising
 ```
 
-## Flex sensor
+## Flex sensors
 
-Wiring: `3V3 → flex → GPIO34 → 47k → GND`. GPIO34 is input-only and on ADC1,
-which keeps working while the BLE radio is active (ADC2 pins do not).
+Two of them, each its own divider:
+
+```
+3V3 ── flex ── GPIO34 ── 47k ── GND     finger 1 -> volume
+3V3 ── flex ── GPIO35 ── 47k ── GND     finger 2 -> vibrato
+```
+
+The resistor is what makes it readable at all: a flex sensor is a variable
+resistor, but the ADC measures voltage. The two form a divider, so bending
+raises the sensor's resistance and drops the voltage at the pin. Pick a
+fixed resistor near the middle of the sensor's own range for the widest
+swing. Without it the pin floats and reads noise.
+
+Both pins are on ADC1, which keeps working while the BLE radio is active
+(ADC2 pins do not), and GPIO34–39 are input-only — fine for sensors, never
+usable as outputs. That leaves GPIO36 and 39 for two more fingers.
 
 The ESP32 sends the raw ADC value and the laptop self-calibrates: it widens
 its min/max as you bend, so no fixed thresholds are needed. Until it sees a
@@ -190,26 +233,37 @@ the rail below ~3.0V.
 
 ## Hardware notes (BNO08x)
 
-Wiring: VCC→3V3, GND→GND, SDA→GPIO21, SCL→GPIO22, RST→GPIO4, PS0/PS1→GND
-(I2C mode), ADD→3V3 (address 0x4B). Flex sensor: 3V3 → flex → GPIO34, with a
-47k pulldown to GND.
+| Part | Pins |
+| --- | --- |
+| BNO08x | SDA→21, SCL→22, RST→4, ADD→3V3 (0x4B), PS0/PS1→GND |
+| INMP441 mic | SCK→33, WS→25, SD→32, L/R→GND |
+| Flex sensors | GPIO34, GPIO35 (each with a 47k to GND) |
+| Button | GPIO18 → GND (internal pull-up) |
+| Status LED | GPIO19 via 220Ω |
 
-Flash with `UploadSpeed=115200` — the USB adapter fails at the default
-921600:
+Avoid GPIO0/2/12/15 (boot strapping), GPIO6–11 (flash), and **GPIO16/17** —
+measured on this board, GPIO16 reads LOW with the pull-up enabled and nothing
+attached, because it belongs to the PSRAM on WROVER modules.
+
+Flash with **both** options: `PSRAM=enabled` (the audio buffer lives there)
+and `UploadSpeed=115200` (the USB adapter fails at the default 921600).
+Dropping either one is a silent way to waste ten minutes:
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32 esp32/glove_ble
+arduino-cli compile --fqbn esp32:esp32:esp32:PSRAM=enabled esp32/glove_ble
 arduino-cli upload -p "$(ls /dev/cu.usbserial-* | head -1)" \
-  --fqbn esp32:esp32:esp32:UploadSpeed=115200 esp32/glove_ble
+  --fqbn esp32:esp32:esp32:PSRAM=enabled,UploadSpeed=115200 esp32/glove_ble
 ```
 
 macOS renames the port on each replug (`usbserial-10`, `-110`, …), hence the
 `ls` rather than a fixed path.
 
-The glove sends 32-byte packets at 50 Hz: `roll, pitch, yaw` (degrees),
+The glove sends 36-byte packets at 50 Hz: `roll, pitch, yaw` (degrees),
 `lax, lay, laz` (m/s², gravity removed), `status` (1 = live sensor, 0 = not
-detected) and `flex` (raw ADC 0–4095). `ble_receiver.py` also accepts the
-older 28- and 24-byte layouts.
+detected) and `flex, flex2` (raw ADC 0–4095). Recordings travel separately on
+their own characteristic: a 12-byte header (`AUD0`, sample count, rate) then
+raw little-endian int16. `ble_receiver.py` also accepts older packet
+layouts.
 
 **The BNO08x stall trap.** The sensor's SHTP transport can wedge: reports
 stop, and it keeps ACKing its I2C address while refusing to re-initialize
