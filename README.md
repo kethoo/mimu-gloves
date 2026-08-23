@@ -150,6 +150,24 @@ makes the sound quieter instead of louder, flip `FLEX_INVERT` in
 `python diagnose.py` prints the live flex ADC value and the total range seen,
 which is the quickest way to check the sensor and pick a divider resistor.
 
+## Is it the code or the hardware?
+
+`esp32/bno_min/` is a minimal sketch — no BLE, no watchdog, no bus recovery —
+that just initializes the BNO08x and prints how many reports per second it
+receives. Flash it to settle the question in 30 seconds:
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32 esp32/bno_min
+arduino-cli upload -p "$(ls /dev/cu.usbserial-* | head -1)" \
+  --fqbn esp32:esp32:esp32:UploadSpeed=115200 esp32/bno_min
+```
+
+A healthy sensor prints `reports/s=~50` continuously. `begin_I2C OK` followed
+by `reports/s=0` means the sensor initializes but will not stream — that is a
+hardware fault (power, wiring or a latched sensor), not a firmware bug. Try a
+full power cycle first: unplugging USB for ~10 s clears states that toggling
+RST does not.
+
 ## Finding intermittent connections
 
 ```bash
@@ -223,6 +241,10 @@ python main.py --ble         # glove only, no controls
 `--ble` scans for the device named `MIMU-GLOVE`, holds the first ~0.8 s as
 the neutral hand pose (keep it still until `[glove calibrated — play!]`),
 then plays. Because the BNO08x fuses on-chip, no fusion filter runs here.
+
+It runs until you stop it. If the link drops — or the glove reboots itself to
+clear a wedged sensor — the receiver reconnects and re-zeroes the neutral
+pose automatically, so a dropout costs a few seconds rather than the session.
 
 Combining `--ble --web` is the useful mode: the glove has no buttons yet, so
 the browser supplies instrument switching, voice recording, and mode

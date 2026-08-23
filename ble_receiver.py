@@ -7,10 +7,16 @@ orientation — no fusion math needed here. We just zero the angles against
 a baseline captured right after connecting (hold the glove still for a
 second), smooth lightly, and derive motion/punch from linear acceleration.
 
+Reconnects on its own: the glove reboots itself to recover a wedged sensor,
+and that must not end a performance.
+
 Protocol (must match esp32/glove_ble/glove_ble.ino):
-  24 bytes, 6 little-endian floats, ~100x/second:
+  32 bytes, 8 little-endian floats, 50x/second:
     roll, pitch, yaw   -- degrees, absolute
     lax, lay, laz      -- linear acceleration (gravity removed), m/s^2
+    status             -- 1 = live sensor, 0 = sensor not detected
+    flex               -- raw ADC 0..4095 from the flex divider
+  (28- and 24-byte packets from older firmware are still accepted.)
 
 Requires:  pip install bleak
 """
@@ -68,20 +74,52 @@ class BleGloveSource(GloveSource):
         asyncio.run(self._ble_loop())
 
     async def _ble_loop(self) -> None:
+        """Stay connected for as long as the app runs.
+
+        The glove reboots itself to recover a wedged sensor, and BLE links
+        drop for ordinary radio reasons. Neither should end a performance, so
+        this reconnects indefinitely; only stop() ends the loop.
+        """
         from bleak import BleakClient, BleakScanner
 
-        device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=15)
-        if device is None:
-            print(f"Could not find BLE device '{DEVICE_NAME}'. Is the glove on?")
-            self.quit_requested = True
-            return
-        async with BleakClient(device) as client:
-            print(f"Connected to {DEVICE_NAME}. Hold the glove still to calibrate...")
-            await client.start_notify(CHAR_UUID, self._on_packet)
-            while self._running and client.is_connected:
-                await asyncio.sleep(0.2)
-        print("BLE disconnected.")
+        searching_announced = False
+        while self._running:
+            device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=10)
+            if device is None:
+                if not searching_announced:
+                    print(
+                        f"\n[looking for '{DEVICE_NAME}' — is the glove powered? "
+                        "still searching...]"
+                    )
+                    searching_announced = True
+                continue
+            searching_announced = False
+            try:
+                async with BleakClient(device) as client:
+                    # The glove re-zeroes its own reference when it reboots, so
+                    # the pose baseline must be recaptured on every connection.
+                    self._reset_pose_calibration()
+                    print(
+                        f"Connected to {DEVICE_NAME}. "
+                        "Hold the glove still to calibrate..."
+                    )
+                    await client.start_notify(CHAR_UUID, self._on_packet)
+                    while self._running and client.is_connected:
+                        await asyncio.sleep(0.2)
+            except Exception as exc:  # dropped mid-transfer, adapter busy, ...
+                print(f"\n[BLE connection lost: {exc}]")
+            if self._running:
+                print("\n[glove disconnected — reconnecting...]")
+                await asyncio.sleep(1.0)
         self.quit_requested = True
+
+    def _reset_pose_calibration(self) -> None:
+        """Forget the neutral pose so the next packets re-establish it.
+        Flex calibration is kept: that sensor's range does not change."""
+        self._baseline.clear()
+        self._offset = None
+        self._smoothed = [0.0, 0.0, 0.0]
+        self._prev = (0.0, 0.0, 0.0)
 
     def _on_packet(self, _handle, data: bytearray) -> None:
         # 32 bytes = current firmware (status + flex); 28 and 24 are older.
