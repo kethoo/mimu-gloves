@@ -54,24 +54,113 @@ was removed — convincing fake data is worse than silence.)
 
 ## Instruments
 
-Five drone instruments, switchable live (keys `1`–`5` or the UI):
-**Saw Lead**, **Organ** (additive drawbars), **String Pad** (detuned saw
-ensemble), **FM Bell** (inharmonic 2-op FM), **Flute** (vibrato sine +
-breath noise). All run through the same gesture-controlled filter/pan
-chain — add your own recipe in `GloveSynth._render_tone`.
+Seven instruments, switchable live (keys `1`–`7` or the UI): **Saw Lead**,
+**Organ** (drawbar additive), **String Pad** (detuned saw ensemble, slow
+bow), **FM Bell** (inharmonic 2-op FM with a decaying modulation index),
+**Flute** (vibrato sine with a breath chiff on the onset), **Plucked
+String** (Karplus-Strong), and **Electric Guitar**. All run through the same
+gesture-controlled filter/pan chain — add your own recipe in
+`GloveSynth._render_tone`.
+
+The guitar reuses the plucked string and sends it through the rest of a real
+rig, in order: a second tap on the delay line for the pickup (the line *is*
+the string, so a second tap really is a second listening point, and the comb
+notches it produces are what make a bridge pickup sound nasal), then an
+overdriven clipper, then a speaker cabinet. The cabinet is not optional — a
+clipper generates harmonics all the way to Nyquist, and a real cab is a
+narrow lossy box that removes them. Its string is also tuned differently from
+the acoustic pluck (`KS_VOICES`): an electric string drives a magnetic pickup
+instead of radiating into a soundboard, so it keeps its highs and rings far
+longer. Measured at 1.25 s, the guitar is 9 dB down where the acoustic pluck
+is 37 dB down; most of that is the clipper compressing the loud part of the
+note, which is also why a real one blooms instead of just fading.
+
+The shared filter is a 4-pole resonant ladder (−24 dB/oct). It replaced a
+single pole, which only reached −4 dB an octave above its cutoff: most of
+every instrument's harmonics survived it, so everything came out fizzy and
+tilt behaved like a weak tone knob. Because a real 4-pole *does* cut, the
+cutoff now key-follows the note (`mapping.py`) — otherwise the darkest tilt
+would put the top of the scale two octaves below its own corner and bury it.
+The sawtooths are band-limited with PolyBLEP; the naive phase ramp they used
+before folded 2% of its energy back as inharmonic grit at the top of the
+scale.
+
+Each has its own amplitude envelope (`ENVELOPES` in `synth.py`), and that
+table carries most of the difference between them. An earlier build gave
+every instrument a flat, constant envelope, and they were hard to tell
+apart even though their spectra differed — the ear identifies an
+instrument mostly by its attack and decay, not by its steady-state
+harmonics. Instruments marked *struck* (bell, pluck) re-articulate on a
+note change instead of gliding, and a punch re-strikes them.
+
+## Driving a DAW instead (--midi)
+
+Add `--midi` to any mode and the glove also streams MIDI, so the same
+gestures can play a sampled or modelled instrument in a DAW:
+
+```bash
+python main.py --midi                              # virtual port; pick "Glove" as a MIDI input
+python main.py --midi --midi-port "IAC Driver Bus 1"
+python main.py --ble --web --midi                  # real glove, browser buttons, MIDI out
+```
+
+The built-in synth keeps playing, so this is an A/B rather than a
+replacement. `midi_out.py` is a *sink*, not a second mapping: `mapping.apply`
+has already turned the hand into musical intent and left it on the synth, and
+`MidiOut.update` reads those same target values back out. There is still only
+one place where a gesture becomes music, so the two outputs cannot drift
+apart, and every input (keyboard, browser, BLE, demo) works with it unchanged.
+
+| MIDI                    | Driven by                                    |
+| ----------------------- | -------------------------------------------- |
+| Note on/off, channel 1  | Tilt — the same scale step the synth plays    |
+| Velocity                | Flex 1 at the moment the note starts          |
+| CC 11 expression        | Flex 1, continuously                          |
+| CC 74 brightness        | Roll (the standard filter-cutoff CC)          |
+| CC 1 mod wheel          | Flex 2 (vibrato depth)                        |
+| CC 10 pan               | Yaw                                           |
+| Note 38, channel 10     | Punch (GM acoustic snare)                     |
+| Program change          | Instrument keys `1`–`7`, mapped to GM patches |
+
+A held note stays held — only a change of scale step is a new note, the same
+rule the synth uses — and `m` (mute drone) releases it. Quitting sends All
+Notes Off, so an interrupted note can't drone on in the DAW.
+
+Needs `python-rtmidi`. The import is lazy, so everything else runs without it.
 
 ## How gestures map to sound (mapping.py)
 
-| Hand gesture        | Sensor signal | Sound effect                          |
-| ------------------- | ------------- | ------------------------------------- |
-| Roll wrist left/right | roll        | Musical pitch (A-minor pentatonic) + voice-loop speed |
-| Tilt hand up/down   | pitch         | Brightness (lowpass filter cutoff)    |
-| Point left/right    | yaw           | Stereo pan                            |
-| Bend finger 1       | flex (GPIO34) | Volume / expression, like a breath controller |
-| Bend finger 2       | flex2 (GPIO35)| Vibrato depth — the note wobbles like a singer |
-| Move faster         | motion        | Volume swells — only when no flex sensor is connected |
-| Punch               | accel spike   | Percussive drum hit                   |
-| Hold the button     | GPIO18        | Records your voice on the glove (see below) |
+| Hand gesture              | Sensor signal | Sound effect                    |
+| ------------------------- | ------------- | ------------------------------- |
+| ↪️ Rotate wrist            | roll          | Filter cutoff / brightness, and the voice-loop scrub |
+| ↕️ Tilt hand up/down       | pitch         | Musical pitch, quantized to the scene's scale |
+| 👈 Point left/right        | yaw           | Stereo pan                      |
+| 🤏 Bend index finger       | flex (GPIO34) | Volume / expression, like a breath controller |
+| ✊ Fist (both fingers bent) | flex + flex2  | Activate the sound              |
+| 🖐️ Open hand (both straight) | flex + flex2 | Deactivate it                   |
+| 🤚 Index straight, middle bent | flex + flex2 | Next instrument             |
+| Bend middle finger        | flex2 (GPIO35)| Vibrato depth — the note wobbles like a singer |
+| Move faster               | motion        | Volume swells — only when no flex sensor is connected |
+| 💥 Wrist flick             | accel spike   | Percussive drum hit             |
+| 👆 Button, short press     | GPIO18        | Next scene                      |
+| Button, hold              | GPIO18        | Records your voice on the glove (see below) |
+
+**Scenes** bundle an instrument, a scale and the active modes, so one button
+press moves the whole setup — `Lead` (saw, pentatonic), `Cathedral` (organ,
+minor), `Bowed` (strings, dorian), `Chimes` (bell, whole-tone), `Amp`
+(guitar, minor), `Cloud` (strings, whole-tone, granular). Edit `SCENES` in
+`mapping.py`.
+
+**Two honest limits.** "Up/down" and "left/right" are tilt and yaw, not
+translation: the BNO08x reports orientation only, and deriving position would
+mean double-integrating acceleration, which drifts into nonsense within
+seconds. And two flex sensors give four states total, while the index finger
+is already the volume control — so a posture fires only on entry, once, and
+only after being held (0.35 s, or 1.0 s for the open hand). Measured, a slow
+fade-out running into a fade-in dwells ~0.84 s in the open-hand region, which
+is why that one needs the longer dwell. Bending the index past the posture
+threshold always re-opens the gate, so a stray deactivate can never strand you
+in silence.
 
 ## Recording on the glove (button + INMP441)
 
@@ -169,8 +258,8 @@ python main.py --scan   # list BLE devices and confirm the glove is advertising
 Two of them, each its own divider:
 
 ```
-3V3 ── flex ── GPIO34 ── 47k ── GND     finger 1 -> volume
-3V3 ── flex ── GPIO35 ── 47k ── GND     finger 2 -> vibrato
+3V3 ── flex ── GPIO34 ── 15k ── GND     finger 1 -> volume
+3V3 ── flex ── GPIO35 ── 15k ── GND     finger 2 -> vibrato
 ```
 
 The resistor is what makes it readable at all: a flex sensor is a variable
@@ -185,7 +274,7 @@ usable as outputs. That leaves GPIO36 and 39 for two more fingers.
 
 The ESP32 sends the raw ADC value and the laptop self-calibrates: it widens
 its min/max as you bend, so no fixed thresholds are needed. Until it sees a
-swing of at least `FLEX_MIN_SPAN` (150 ADC counts) it reports "no flex
+swing of at least `FLEX_MIN_SPAN` (80 ADC counts) it reports "no flex
 sensor" and volume falls back to hand motion — it never guesses. If bending
 makes the sound quieter instead of louder, flip `FLEX_INVERT` in
 `ble_receiver.py`.
@@ -226,7 +315,7 @@ the 400 kHz I2C clock, not a loose jumper — see the stall trap below. At
 worth wiggling one wire at a time to find a bad contact.
 
 The flex sensor cannot electrically disturb the IMU — it draws ~55 µA through
-the 47k divider, GPIO34 is on ADC1 (independent of the radio), and it shares
+the 15k divider, GPIO34 is on ADC1 (independent of the radio), and it shares
 no pins with I2C. If adding it breaks the IMU, the cause is mechanical
 (disturbed jumpers) or a slipped jumper shorting 3V3 to GND, which would sag
 the rail below ~3.0V.
@@ -237,7 +326,7 @@ the rail below ~3.0V.
 | --- | --- |
 | BNO08x | SDA→21, SCL→22, RST→4, ADD→3V3 (0x4B), PS0/PS1→GND |
 | INMP441 mic | SCK→33, WS→25, SD→32, L/R→GND |
-| Flex sensors | GPIO34, GPIO35 (each with a 47k to GND) |
+| Flex sensors | GPIO34, GPIO35 (each with a 15k to GND) |
 | Button | GPIO18 → GND (internal pull-up) |
 | Status LED | GPIO19 via 220Ω |
 
@@ -258,12 +347,15 @@ arduino-cli upload -p "$(ls /dev/cu.usbserial-* | head -1)" \
 macOS renames the port on each replug (`usbserial-10`, `-110`, …), hence the
 `ls` rather than a fixed path.
 
-The glove sends 36-byte packets at 50 Hz: `roll, pitch, yaw` (degrees),
+The glove sends 40-byte packets at 50 Hz: `roll, pitch, yaw` (degrees),
 `lax, lay, laz` (m/s², gravity removed), `status` (1 = live sensor, 0 = not
-detected) and `flex, flex2` (raw ADC 0–4095). Recordings travel separately on
-their own characteristic: a 12-byte header (`AUD0`, sample count, rate) then
-raw little-endian int16. `ble_receiver.py` also accepts older packet
-layouts.
+detected), `flex, flex2` (raw ADC 0–4095) and `scenePresses` (a running count
+of short button presses — a count rather than a pulse, so a dropped
+notification cannot swallow a press). Recordings travel separately on their
+own characteristic: a 12-byte header (`AUD0`, sample count, rate) then raw
+little-endian int16. `ble_receiver.py` also accepts the older 36/32/28/24-byte
+layouts, so a glove on previous firmware still plays — it just has no scene
+button.
 
 **The BNO08x stall trap.** The sensor's SHTP transport can wedge: reports
 stop, and it keeps ACKing its I2C address while refusing to re-initialize

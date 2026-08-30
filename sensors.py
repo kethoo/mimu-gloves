@@ -30,6 +30,11 @@ class SensorFrame:
     flex:   first finger bend, 0.0 (straight) .. 1.0 (fully bent), or None
             if that sensor is missing
     flex2:  second finger bend, same scale, or None
+    flex_raw, flex2_raw:
+            uncalibrated ADC counts straight off the glove, or None. Only
+            for diagnostics: it is the difference between "the sensor is
+            dead" and "the sensor works but has not swung far enough for
+            the auto-calibration to trust it yet".
     """
 
     roll: float = 0.0
@@ -38,6 +43,8 @@ class SensorFrame:
     motion: float = 0.0
     flex: float | None = None
     flex2: float | None = None
+    flex_raw: float | None = None
+    flex2_raw: float | None = None
     t: float = field(default_factory=time.monotonic)
 
 
@@ -85,6 +92,11 @@ class GloveSource:
                 roll=prev.roll + (tgt.roll - prev.roll) * k,
                 pitch=prev.pitch + (tgt.pitch - prev.pitch) * k,
                 yaw=prev.yaw + (tgt.yaw - prev.yaw) * k,
+                # Finger bend passes straight through: it is set directly
+                # rather than nudged, and the postures built on it need the
+                # value the player actually asked for.
+                flex=tgt.flex,
+                flex2=tgt.flex2,
             )
             speed = (
                 abs(f.roll - prev.roll)
@@ -158,12 +170,17 @@ class MergedGloveSource(GloveSource):
 class SimulatedGloveSource(GloveSource):
     """Keyboard-driven fake glove.
 
-    a/d = roll left/right      w/s = pitch up/down
-    q/e = yaw left/right       space = punch gesture
-    v   = record/stop voice    o = overdub a layer on top
-    p   = play/pause loop      g = granular mode on/off
-    b   = slice mode on/off    m = mute/unmute drone
-    r   = reset to neutral     x = quit
+    a/d = roll (brightness)    w/s = tilt up/down (musical pitch)
+    q/e = yaw left/right       space = wrist flick (drum hit)
+    [/] = index finger bend    ;/' = middle finger bend
+    n   = next scene           v = record/stop voice
+    o   = overdub a layer      p = play/pause loop
+    g   = granular mode        b = slice mode on/off
+    m   = mute/unmute drone    r = reset to neutral
+    x   = quit
+
+    Bend both fingers for a fist (sound on), straighten both for an open
+    hand (sound off), index straight + middle bent to change instrument.
     Keys nudge the hand; it also drifts slowly back toward neutral,
     which feels a bit like a real hand relaxing.
     """
@@ -218,8 +235,16 @@ class SimulatedGloveSource(GloveSource):
                     self.events.append("mute")
                 elif c == "l":
                     self.events.append("live")
-                elif c in "12345":
-                    names = ["saw", "organ", "strings", "bell", "flute"]
+                elif c == "n":
+                    self.events.append("scene")
+                elif c in "[]":
+                    # index finger bend: volume, and half of every posture
+                    t.flex = min(max((t.flex or 0.0) + (0.2 if c == "]" else -0.2), 0.0), 1.0)
+                elif c in ";'":
+                    t.flex2 = min(max((t.flex2 or 0.0) + (0.2 if c == "'" else -0.2), 0.0), 1.0)
+                elif c in "1234567":
+                    names = ["saw", "organ", "strings", "bell", "flute",
+                             "pluck", "guitar"]
                     self.events.append("instrument:" + names[int(c) - 1])
                 elif c == "r":
                     t.roll = t.pitch = t.yaw = 0.0
@@ -238,18 +263,18 @@ class DemoGloveSource(GloveSource):
     SCRIPT = [
         ("neutral hand, steady tone", 2.0,
          lambda u: (0, 0, 0, False)),
-        ("roll right -> pitch rises", 3.0,
-         lambda u: (80 * u, 0, 0, False)),
-        ("roll left -> pitch falls", 3.0,
-         lambda u: (80 - 160 * u, 0, 0, False)),
-        ("tilt hand up -> sound brightens", 3.0,
-         lambda u: (-80 + 80 * u, 70 * u, 0, False)),
+        ("tilt hand up -> pitch rises", 3.0,
+         lambda u: (0, 80 * u, 0, False)),
+        ("tilt hand down -> pitch falls", 3.0,
+         lambda u: (0, 80 - 160 * u, 0, False)),
+        ("rotate wrist -> sound brightens", 3.0,
+         lambda u: (80 * u, -80 + 80 * u, 0, False)),
         ("sweep yaw -> sound pans left/right", 4.0,
-         lambda u: (0, 70, 70 * math.sin(2 * math.pi * u), False)),
-        ("punch! percussive hit", 1.5,
-         lambda u: (0, 20, 0, u < 0.05)),
-        ("punch again", 1.5,
-         lambda u: (30, -20, 0, u < 0.05)),
+         lambda u: (70, 0, 70 * math.sin(2 * math.pi * u), False)),
+        ("wrist flick! percussive hit", 1.5,
+         lambda u: (20, 0, 0, u < 0.05)),
+        ("flick again", 1.5,
+         lambda u: (-20, 30, 0, u < 0.05)),
         ("wave goodbye (fast rolls)", 4.0,
          lambda u: (60 * math.sin(6 * math.pi * u), 30, 0, False)),
     ]

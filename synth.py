@@ -26,13 +26,79 @@ PS_WIN = 2048                        # pitch-shifter tap window (~46 ms)
 ECHO_DELAY = int(0.30 * SAMPLE_RATE) # live voice echo time
 ECHO_LEN = ECHO_DELAY + BLOCK
 
+FILTER_RES = 1.1     # ladder feedback; higher = more resonant peak at cutoff
+
+KS_MAX = 2048        # plucked string: longest delay line (lowest note)
+KS_GAIN = 2.4        # the string sits quieter than the oscillators; match it
+
+# Karplus-Strong voices: (T60 seconds, loop-filter weight).
+# The weight is how much of the *current* sample the loop keeps versus the
+# previous one. The classic 0.5 is a plain two-point average, which dulls the
+# string fast — right for an acoustic pluck. An electric string is driven by a
+# magnetic pickup rather than radiating into a soundboard, so it keeps its
+# highs and rings far longer: a higher weight, and a much longer T60.
+KS_VOICES = {
+    "pluck":  (2.0, 0.50),
+    "guitar": (5.0, 0.86),
+}
+
+GUITAR_DRIVE = 11.0     # preamp gain into the clipper
+GUITAR_PICKUP = 0.21    # tap position along the string (bridge-ish, nasal)
+GUITAR_CAB_LO = 90.0    # speaker rolls off below this...
+GUITAR_CAB_HI = 4200.0  # ...and hard above this. Without it: fizz.
+
 INSTRUMENTS = {
     "saw": "Saw Lead",
     "organ": "Organ",
     "strings": "String Pad",
     "bell": "FM Bell",
     "flute": "Flute",
+    "pluck": "Plucked String",
+    "guitar": "Electric Guitar",
 }
+
+# Per-instrument amplitude envelope: (attack s, decay s, sustain 0..1, struck).
+#
+# This table matters more than the harmonic recipes below. Without it every
+# instrument is a constant-amplitude drone, and a bell that never rings out
+# is not a bell — the ear identifies an instrument mostly by its attack
+# transient and decay shape, not by its steady-state spectrum.
+#
+# "struck" means the note is re-articulated rather than glided into: the
+# pitch snaps instead of sliding, and a punch re-strikes it.
+ENVELOPES = {
+    #            attack  decay  sustain  struck
+    "saw":     (  0.010,  0.30,    0.72,  False),
+    "organ":   (  0.004,  0.02,    1.00,  False),  # organs are on/off
+    "strings": (  0.350,  0.50,    0.85,  False),  # slow bow
+    "bell":    (  0.002,  2.20,    0.00,   True),  # struck, rings out
+    "flute":   (  0.100,  0.20,    0.88,  False),  # breath takes time
+    "pluck":   (  0.001,  0.01,    1.00,   True),  # string decays on its own
+    "guitar":  (  0.001,  0.01,    1.00,   True),  # ditto, plus the amp
+}
+
+
+def _poly_saw(p: np.ndarray, dt: float) -> np.ndarray:
+    """Band-limited sawtooth from a phase ramp (PolyBLEP).
+
+    A raw `2*p - 1` ramp has unlimited harmonics, and every one above Nyquist
+    folds back down as inharmonic grit — measured at 55% of total energy for
+    the four-saw string pad at the top of the scale, which is most of what
+    made it sound harsh. Smoothing the wrap discontinuity with a two-sample
+    polynomial removes the bulk of it for a couple of array ops.
+    """
+    s = 2.0 * p - 1.0
+    if dt <= 0.0:
+        return s
+    lo = p < dt
+    if lo.any():
+        x = p[lo] / dt
+        s[lo] -= x + x - x * x - 1.0
+    hi = p > 1.0 - dt
+    if hi.any():
+        x = (p[hi] - 1.0) / dt
+        s[hi] -= x * x + x + x + 1.0
+    return s
 
 
 class GloveSynth:
@@ -58,10 +124,29 @@ class GloveSynth:
         self._lfo = 0.0           # vibrato LFO phase (flute)
         self._vib = 0.0           # vibrato LFO phase (finger-controlled)
         self._vibDepth = 0.0      # smoothed depth
-        self._lp = 0.0            # one-pole lowpass state
+        self._lp = [0.0, 0.0, 0.0, 0.0]  # four-pole ladder filter state
         self._pluck_env = 0.0     # decaying envelope for percussive hits
         self._pluck_lp = 0.0
         self._rng = np.random.default_rng()
+
+        # Note articulation. mapping.py quantizes roll to a scale, so
+        # target_freq moves in discrete steps and each step is a note-on.
+        self._note_freq = 0.0     # 0 => the first block articulates a note
+        self._env = 0.0           # amplitude envelope level
+        self._env_stage = 0       # 0 = attack, 1 = decay/sustain
+        self._chiff = 0.0         # flute breath-onset burst
+
+        # Karplus-Strong string: a delay line one wavelength long, fed back
+        # through a two-point average. The averaging is a lowpass, so every
+        # pass round the loop dulls the tone a little — which is what a real
+        # string does as it rings.
+        self._ks_buf = np.zeros(KS_MAX)
+        self._ks_n = 200          # current delay length, in samples
+        self._ks_i = 0            # read/write position
+        self._ks_prev = 0.0       # previous sample, for the averaging filter
+        self._ks_decay = 1.0      # per-pass loop gain
+        self._ks_b = 0.5          # loop-filter weight (see KS_VOICES)
+        self._cab = [0.0, 0.0, 0.0]  # guitar speaker filter state
 
         # Voice loop: recorded from the mic, replayed through the same
         # gesture-controlled filter/pan chain as the oscillator.
@@ -130,13 +215,48 @@ class GloveSynth:
         self._stream.close()
 
     def pluck(self) -> None:
-        """Trigger a percussive hit (punch gesture)."""
+        """Trigger a percussive hit (punch gesture). On a struck instrument
+        it also re-articulates the note, so punching re-rings the bell or
+        re-plucks the string instead of only firing the drum layer."""
         self._pluck_env = 1.0
+        if ENVELOPES[self.instrument][3]:
+            self._note_on()
 
-    def set_instrument(self, name: str) -> None:
+    def _note_on(self) -> None:
+        """Articulate a new note.
+
+        Struck instruments restart from silence. The sustained ones re-enter
+        the attack from wherever the envelope already is, so a run of notes
+        is legato — resetting them to zero would gate the sound off on every
+        step, and a 350 ms pad would never get to full level while the hand
+        was moving.
+        """
+        self._env_stage = 0
+        self._chiff = 1.0
+        if ENVELOPES[self.instrument][3]:
+            self._env = 0.0
+            if self.instrument in KS_VOICES:
+                self._ks_pluck()
+
+    def set_instrument(self, name: str, announce: bool = True) -> None:
         if name in INSTRUMENTS:
             self.instrument = name
-            print(f"\n[instrument: {INSTRUMENTS[name]}]")
+            self._note_on()  # so you hear the new instrument's attack
+            if announce:
+                print(f"\n[instrument: {INSTRUMENTS[name]}]")
+
+    def next_instrument(self) -> None:
+        """Step to the next instrument (the 'point' posture)."""
+        names = list(INSTRUMENTS)
+        self.set_instrument(names[(names.index(self.instrument) + 1) % len(names)])
+
+    def set_gate(self, on: bool) -> None:
+        """Fist activates the sound, an open hand deactivates it. Distinct
+        from toggle_drone only in being absolute rather than a toggle, which
+        is what a posture needs: holding a fist must always mean 'on'."""
+        if on != self.drone_on:
+            self.drone_on = on
+            print("\n[sound ON]" if on else "\n[sound OFF — make a fist, or just play]")
 
     @property
     def is_recording(self) -> bool:
@@ -352,16 +472,30 @@ class GloveSynth:
         if self.live_on and live_in is not None and len(live_in) == frames:
             saw = saw + self._process_live(live_in, frames) * 0.9
 
-        # One-pole lowpass, coefficient from cutoff frequency.
-        a = 1.0 - np.exp(-2.0 * np.pi * self._cutoff / SAMPLE_RATE)
+        # Four-pole resonant lowpass (-24 dB/oct), the classic ladder shape.
+        # A single pole managed only -4 dB one octave above cutoff, so almost
+        # every harmonic survived it and all six instruments came out fizzy.
+        # The resonant peak is also what makes a tilt sweep sound like an
+        # instrument opening up rather than a tone knob being turned.
+        # Four poles pull the corner down but the resonant peak lifts it back,
+        # so the coefficient needs no trim: measured, a nominal 1 kHz lands
+        # its -3 dB point at 1009 Hz.
+        fc = min(self._cutoff, 0.45 * SAMPLE_RATE)
+        a = min(1.0 - np.exp(-2.0 * np.pi * fc / SAMPLE_RATE), 0.9)
+        res = FILTER_RES
+        y1, y2, y3, y4 = self._lp
         lp = np.empty(frames)
-        y = self._lp
         for i in range(frames):
-            y += a * (saw[i] - y)
-            lp[i] = y
-        self._lp = y
+            x = saw[i] - res * y4   # feedback around the whole ladder
+            y1 += a * (x - y1)
+            y2 += a * (y1 - y2)
+            y3 += a * (y2 - y3)
+            y4 += a * (y3 - y4)
+            lp[i] = y4
+        self._lp = [y1, y2, y3, y4]
 
-        mono = lp
+        # The feedback costs (1 + res) of passband gain; put it back.
+        mono = lp * (1.0 + res)
 
         # Percussive layer: filtered noise burst with exponential decay.
         if self._pluck_env > 1e-4:
@@ -439,13 +573,27 @@ class GloveSynth:
 
         Each instrument is a cheap vectorized recipe; self._ph holds phase
         accumulators for the fundamental and extra partials so pitch changes
-        stay click-free.
+        stay click-free. The per-instrument envelope from ENVELOPES is
+        applied here — it does more to separate a struck bell from a bowed
+        pad than the harmonic recipes do.
         """
+        attack, decay, sustain, struck = ENVELOPES[self.instrument]
+
+        # A change in target_freq is a note-on: mapping.py has already
+        # quantized roll to a scale, so the target only moves in steps.
+        # Struck instruments jump to the new pitch — a bell does not glide.
+        if abs(self.target_freq - self._note_freq) > 1e-6:
+            self._note_freq = self.target_freq
+            if struck:
+                self._freq = self.target_freq
+            self._note_on()
+
         # Vibrato: the second finger wobbles the pitch, like a singer or a
         # string player. Applied to the increment so every instrument gets it.
         self._vibDepth += (self.target_vibrato - self._vibDepth) * 0.1
         n = np.arange(frames)
         two_pi = 2.0 * np.pi
+        env = self._env_block(n, frames, attack, decay, sustain)
         if self._vibDepth > 1e-3:
             lfo = np.sin(two_pi * (self._vib + VIBRATO_HZ / SAMPLE_RATE * n)).mean()
             self._vib = float((self._vib + VIBRATO_HZ * frames / SAMPLE_RATE) % 1.0)
@@ -459,32 +607,156 @@ class GloveSynth:
             self._ph[k] = float((self._ph[k] + inc * mult * frames) % 1.0)
             return p
 
+        def saw(k: int, mult: float = 1.0) -> np.ndarray:
+            return _poly_saw(ph(k, mult), inc * mult)
+
         ins = self.instrument
-        if ins == "organ":
-            # Additive: fundamental + 3 harmonics, drawbar-style.
-            return (
+        if ins == "pluck":
+            # The string carries its own decay, so the envelope above only
+            # supplies the attack.
+            tone = self._render_ks(frames) * KS_GAIN
+        elif ins == "guitar":
+            # String -> pickup -> overdrive -> cabinet, the order a real rig
+            # works in. The clipper is also what gives the note its sustain:
+            # it compresses hard while the string is loud and cleans up as the
+            # string decays, so the note blooms instead of just fading.
+            string = self._render_ks(frames, pickup=GUITAR_PICKUP)
+            tone = self._cabinet(np.tanh(string * GUITAR_DRIVE)) * 0.55
+        elif ins == "organ":
+            # Hammond drawbars: strong octaves (2x, 4x) over a weak third
+            # partial. A 1/n series here would just *be* a sawtooth, which is
+            # why the old weights measured 0.98 spectrally similar to "saw".
+            tone = (
                 np.sin(two_pi * ph(0))
-                + 0.5 * np.sin(two_pi * ph(1, 2.0))
-                + 0.35 * np.sin(two_pi * ph(2, 3.0))
-                + 0.2 * np.sin(two_pi * ph(3, 4.0))
-            ) / 1.6
-        if ins == "strings":
-            # Three slightly detuned saws beat against each other: pad.
-            return (
-                2.0 * ph(0, 0.995) + 2.0 * ph(1) + 2.0 * ph(2, 1.005) - 3.0
-            ) / 2.2
-        if ins == "bell":
-            # 2-op FM with an inharmonic ratio: metallic.
-            return 0.9 * np.sin(
-                two_pi * ph(0) + 2.0 * np.sin(two_pi * ph(1, 2.76))
-            )
-        if ins == "flute":
-            # Sine with 5 Hz vibrato and a whisper of breath noise.
+                + 0.80 * np.sin(two_pi * ph(1, 2.0))
+                + 0.18 * np.sin(two_pi * ph(2, 3.0))
+                + 0.55 * np.sin(two_pi * ph(3, 4.0))
+            ) / 2.1
+        elif ins == "strings":
+            # Bowed ensemble. The detune has to be wide and unevenly spaced:
+            # the old symmetric +/-0.5% put both beat rates at 1.1 Hz, so the
+            # three saws swelled as one slow lump instead of blurring into a
+            # section. Four voices, and the gaps between them have to be
+            # unequal too — evenly spaced detune makes every adjacent pair
+            # beat at the same rate, and they reinforce into exactly the
+            # pulsing this is meant to avoid. The slow attack does the rest
+            # of the bowing.
+            tone = (
+                saw(0, 0.9865) + saw(1, 0.9971) + saw(2, 1.0032) + saw(3, 1.0148)
+            ) / 3.2
+        elif ins == "bell":
+            # 2-op FM, inharmonic ratio. The modulation index has to decay
+            # faster than the amplitude: that bright metallic strike settling
+            # into a pure tone is the "ding". A fixed index is a static buzz.
+            idx = 7.0 * env ** 2.0
+            tone = np.sin(two_pi * ph(0) + idx * np.sin(two_pi * ph(1, 2.76)))
+        elif ins == "flute":
+            # Sine + a little octave, and breath noise that is loud for the
+            # first ~50 ms (the player's "chiff") then drops to a whisper.
+            # Constant noise just reads as hiss and swamped the harmonics.
             lfo = np.sin(two_pi * (self._lfo + 5.0 / SAMPLE_RATE * n))
             self._lfo = float((self._lfo + 5.0 * frames / SAMPLE_RATE) % 1.0)
-            return np.sin(two_pi * ph(0) + 0.3 * lfo) + 0.03 * self._rng.standard_normal(frames)
-        # default: classic bright sawtooth
-        return 2.0 * ph(0) - 1.0
+            chiff = self._chiff * np.exp(-n / (0.05 * SAMPLE_RATE))
+            self._chiff = float(chiff[-1])
+            tone = 0.85 * (
+                np.sin(two_pi * ph(0) + 0.3 * lfo)
+                + 0.14 * np.sin(two_pi * ph(1, 2.0))
+            ) + self._rng.standard_normal(frames) * (0.008 + 0.10 * chiff)
+        else:
+            # default: classic bright sawtooth
+            tone = saw(0)
+        return tone * env
+
+    def _env_block(
+        self, n: np.ndarray, frames: int, attack: float, decay: float, sustain: float
+    ) -> np.ndarray:
+        """One block of the amplitude envelope.
+
+        Two exponential stages — rise to 1, then fall to the sustain level.
+        Each stage is exact per sample; only the switch between them lands on
+        a block boundary (~6 ms), which is well under the shortest attack
+        anyone can hear as anything but instant.
+        """
+        if self._env_stage == 0:
+            tau = max(attack, 1e-4) * SAMPLE_RATE / 3.0  # 3 tau ~= 95%
+            gap = 1.0 - self._env
+            env = 1.0 - gap * np.exp(-n / tau)
+            self._env = float(1.0 - gap * np.exp(-frames / tau))
+            if self._env > 0.99:
+                self._env_stage = 1
+        else:
+            tau = max(decay, 1e-4) * SAMPLE_RATE / 3.0
+            gap = self._env - sustain
+            env = sustain + gap * np.exp(-n / tau)
+            self._env = float(sustain + gap * np.exp(-frames / tau))
+        return env
+
+    def _ks_pluck(self) -> None:
+        """Excite the string: fill one wavelength of the delay line with
+        noise. Every pass round the loop then runs it through the two-point
+        average, so the harmonics die off fastest — the same way a real
+        string loses its brightness long before it goes quiet."""
+        t60, self._ks_b = KS_VOICES[self.instrument]
+        n = int(np.clip(SAMPLE_RATE / max(self._freq, 20.0), 8, KS_MAX))
+        self._ks_n = n
+        exc = self._rng.standard_normal(n)
+        self._ks_buf[:n] = exc * (0.9 / max(float(np.abs(exc).max()), 1e-6))
+        self._ks_i = 0
+        self._ks_prev = 0.0
+        # The loop gain hits any given sample once per *pass* round the delay
+        # line, not once per sample — hence the factor of n. Leave it out and
+        # a 2 s decay comes out around 250 s, which just sounds like a drone.
+        self._ks_decay = float(np.exp(-6.9078 * n / (t60 * SAMPLE_RATE)))
+
+    def _render_ks(self, frames: int, pickup: float = 0.0) -> np.ndarray:
+        """Karplus-Strong: read the delay line, write back a weighted average
+        of the last two samples. Recursive by nature, so this is the one part
+        of the engine that cannot be vectorized — same per-sample shape as the
+        ladder filter in _callback.
+
+        `pickup` places a second tap that fraction of the way along the
+        string and subtracts it. The delay line really is the string, so a
+        second tap really is a second listening point, and the comb notches
+        that fall out are the same ones that make a bridge pickup sound
+        nasal. It is the cheapest honest thing in the whole engine.
+        """
+        buf = self._ks_buf
+        n, i, prev, d = self._ks_n, self._ks_i, self._ks_prev, self._ks_decay
+        b = self._ks_b
+        c = 1.0 - b
+        tap = int(n * pickup)
+        pk = 0.62 if tap else 0.0
+        out = np.empty(frames)
+        for k in range(frames):
+            v = buf[i]
+            j = i + tap
+            if j >= n:
+                j -= n
+            out[k] = v - pk * buf[j]
+            buf[i] = (b * v + c * prev) * d
+            prev = v
+            i += 1
+            if i >= n:
+                i = 0
+        self._ks_i, self._ks_prev = i, float(prev)
+        return out
+
+    def _cabinet(self, x: np.ndarray) -> np.ndarray:
+        """Guitar speaker: two poles down above ~4 kHz, one pole up below
+        ~90 Hz. A real cab is a narrow, lossy box, and skipping it is what
+        makes an amp sim sound like a buzzsaw — the clipper generates
+        harmonics all the way to Nyquist and something has to remove them."""
+        a = 1.0 - np.exp(-2.0 * np.pi * GUITAR_CAB_HI / SAMPLE_RATE)
+        r = float(np.exp(-2.0 * np.pi * GUITAR_CAB_LO / SAMPLE_RATE))
+        y1, y2, hp = self._cab
+        out = np.empty(len(x))
+        for i in range(len(x)):
+            y1 += a * (x[i] - y1)
+            y2 += a * (y1 - y2)
+            hp = r * hp + (1.0 - r) * y2   # track the lows...
+            out[i] = y2 - hp               # ...then subtract them
+        self._cab = [y1, y2, hp]
+        return out
 
     def _render_grains(self, buf: np.ndarray, frames: int) -> np.ndarray:
         """Granular cloud: short Hann-windowed grains drawn from the scrub

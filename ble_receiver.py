@@ -38,6 +38,7 @@ DEVICE_NAME = "MIMU-GLOVE"
 
 BASELINE_PACKETS = 80    # ~0.8 s of "hold still" used as the zero pose
 PUNCH_THRESHOLD = 12.0   # linear accel magnitude (m/s^2) that counts as a punch
+SCENE_BURST_CAP = 4      # more missed presses than this means a glove reboot
 # Orientation smoothing. The BNO08x fuses on-chip and its output is already
 # very clean (jitter measured at ~0.04 deg), so this is deliberately lighter
 # than the original sketch's 0.85 — at 50 Hz that gives ~40 ms of lag instead
@@ -46,8 +47,28 @@ ALPHA = 0.5
 
 # Flex sensor: how much ADC swing counts as a real, deliberate bend rather
 # than noise. Below this the sensor is treated as absent.
-FLEX_MIN_SPAN = 150.0
+#
+# Sized against the actual hardware, not a guess: a 13-16k sensor into a 15k
+# leg swings 3.3*15/(13+15) - 3.3*15/(16+15) = 0.17 V, which is only ~212 of
+# 4095 counts end to end. The old 150 demanded 71% of that before a channel
+# would come alive, so a normal bend never registered.
+FLEX_MIN_SPAN = 80.0
 FLEX_INVERT = True  # bending increases resistance -> lowers the divider voltage
+# Set True if the two sensors are wired to the opposite pins from what the
+# mapping expects — i.e. bending the index finger moves vibrato instead of
+# volume. Swapping here costs nothing and saves unpicking the glove.
+FLEX_SWAP = False
+
+# Readings this low are electrically impossible for the real divider and mean
+# the connection dropped out, not that a finger bent. 3V3 -> flex -> pin ->
+# 15k -> GND with a 13-16k sensor sits around 1980-2195 counts; even a 40k
+# sensor could only fall to ~1120. Anything under this is an open circuit.
+#
+# They have to be rejected rather than merely ignored downstream: calibration
+# tracks the min and max ever seen, so a single 96-count dropout permanently
+# rescales the channel and squashes every real bend into the bottom tenth of
+# its range for the rest of the session.
+FLEX_VALID_MIN = 800.0
 
 
 def _wrap(deg: float) -> float:
@@ -68,10 +89,23 @@ class _FlexChannel:
         self.lo = float("inf")
         self.hi = float("-inf")
         self.ready = False
+        self.last: float | None = None   # last good mapped value
+        self.dropouts = 0                # count of rejected readings
+
+    @property
+    def span(self) -> float:
+        """ADC counts seen so far. Below FLEX_MIN_SPAN the channel stays
+        None, so this is what to watch while bending a finger."""
+        return 0.0 if self.hi < self.lo else self.hi - self.lo
 
     def update(self, raw):
         if raw is None:
             return None
+        if raw < FLEX_VALID_MIN:
+            # Dropout. Hold the last good value rather than poisoning the
+            # calibration or flapping the mapped output to zero.
+            self.dropouts += 1
+            return self.last
         self.lo = min(self.lo, raw)
         self.hi = max(self.hi, raw)
         span = self.hi - self.lo
@@ -82,7 +116,8 @@ class _FlexChannel:
             self.ready = True
             print(f"\n[{self.name} detected — range {self.lo:.0f}..{self.hi:.0f}]")
         # Bending raises the sensor's resistance, pulling the divider down.
-        return 1.0 - u if FLEX_INVERT else u
+        self.last = 1.0 - u if FLEX_INVERT else u
+        return self.last
 
 
 class BleGloveSource(GloveSource):
@@ -102,10 +137,20 @@ class BleGloveSource(GloveSource):
         self._warned_testpattern = False
         self._flex = _FlexChannel("flex sensor 1")
         self._flex2 = _FlexChannel("flex sensor 2")
+        # Re-seeded on every reconnect too, so a glove that rebooted with a
+        # higher press count does not fire a burst of scene changes.
+        self._presses: int | None = None
         # Audio arriving from the glove's own microphone.
         self._audio_expected = 0
         self._audio_rate = 16000
         self._audio_parts: list[bytes] = []
+
+    @property
+    def flex_spans(self) -> tuple[float, float]:
+        """ADC swing each flex channel has seen. Until one reaches
+        FLEX_MIN_SPAN that channel reports None, so this is the number to
+        watch when a finger 'does nothing'."""
+        return (self._flex.span, self._flex2.span)
 
     def _run(self) -> None:
         asyncio.run(self._ble_loop())
@@ -185,11 +230,17 @@ class BleGloveSource(GloveSource):
         self._offset = None
         self._smoothed = [0.0, 0.0, 0.0]
         self._prev = (0.0, 0.0, 0.0)
+        self._presses = None  # re-seed from the first packet of this session
 
     def _on_packet(self, _handle, data: bytearray) -> None:
-        # 36 bytes = current firmware (status + two flex); 32/28/24 are older.
+        # 40 bytes = current firmware (adds the scene-press counter);
+        # 36/32/28/24 are older builds and still decode.
         flex_raw = flex2_raw = None
-        if len(data) == 36:
+        presses = None
+        if len(data) == 40:
+            (roll, pitch, yaw, lax, lay, laz,
+             status, flex_raw, flex2_raw, presses) = struct.unpack("<10f", data)
+        elif len(data) == 36:
             (roll, pitch, yaw, lax, lay, laz,
              status, flex_raw, flex2_raw) = struct.unpack("<9f", data)
         elif len(data) == 32:
@@ -273,13 +324,32 @@ class BleGloveSource(GloveSource):
         elif accel_mag < 3.0:
             self._punch_armed = True
 
-        # When the glove gets buttons (record/overdub...), extend the packet
-        # with a button byte and append those events here on press edges.
+        # Short button presses arrive as a running count, not a pulse, so a
+        # dropped notification costs nothing: whatever the count has advanced
+        # by since the last packet is how many presses we missed. Seed from
+        # the first packet rather than 0, or reconnecting to a glove that has
+        # been running a while would fire a burst of scene changes.
+        if presses is not None:
+            count = int(presses)
+            if self._presses is None:
+                self._presses = count
+            elif count != self._presses:
+                # Cap the catch-up: a counter that jumped by hundreds means a
+                # glove reboot, not that someone pressed the button 300 times.
+                missed = count - self._presses
+                for _ in range(missed if 0 < missed <= SCENE_BURST_CAP else 1):
+                    self.events.append("scene")
+                self._presses = count
+
+        if FLEX_SWAP:
+            flex_raw, flex2_raw = flex2_raw, flex_raw
 
         motion = min(speed / 400.0 + accel_mag / 30.0, 1.5)
         self.latest = SensorFrame(
             roll=r, pitch=p, yaw=y, motion=motion,
             flex=self._flex.update(flex_raw),
             flex2=self._flex2.update(flex2_raw),
+            flex_raw=flex_raw,
+            flex2_raw=flex2_raw,
         )
 

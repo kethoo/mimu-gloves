@@ -34,11 +34,30 @@ def find_port(wait: bool = True) -> str | None:
         time.sleep(1)
 
 
+def open_port(port: str) -> serial.Serial:
+    """Open without driving DTR/RTS.
+
+    Those lines are wired to EN and IO0 on the auto-reset circuit, so opening
+    the port the default way can hold the ESP32 in reset or drop it into the
+    bootloader — which looks exactly like a dead board printing nothing.
+    """
+    ser = serial.Serial()
+    ser.port = port
+    ser.baudrate = BAUD
+    ser.timeout = 1
+    ser.dtr = False
+    ser.rts = False
+    ser.open()
+    ser.dtr = False
+    ser.rts = False
+    return ser
+
+
 def main() -> None:
     limit = float(sys.argv[1]) if len(sys.argv) > 1 else None
     port = find_port()
     print(f"--- {port} @ {BAUD} ---")
-    ser = serial.Serial(port, BAUD, timeout=1)
+    ser = open_port(port)
     t0 = time.time()
     try:
         while limit is None or time.time() - t0 < limit:
@@ -50,7 +69,7 @@ def main() -> None:
                 ser.close()
                 port = find_port()
                 print(f"--- reconnected on {port} ---")
-                ser = serial.Serial(port, BAUD, timeout=1)
+                ser = open_port(port)
                 continue
             if line:
                 print(line)

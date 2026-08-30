@@ -60,8 +60,9 @@
            background: #2a2333; border-color: #4c3556; }
   #punch:active { background: var(--hot); color: #12141a; }
 
-  .instruments { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-  @media (max-width: 740px) { .instruments { grid-template-columns: repeat(3, 1fr); } }
+  /* auto-fit so adding an instrument needs no CSS change and it still wraps
+     sensibly on a phone */
+  .instruments { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
   .instruments button { padding: 12px 4px; }
 
   footer { width: 100%; max-width: 860px; margin-top: 18px; display: flex;
@@ -84,16 +85,25 @@
     <div class="label">Hand — drag the pad</div>
     <div id="pad">
       <div id="dot" style="left:50%;top:50%"></div>
-      <span class="axis" style="left:6px;top:50%">roll −</span>
-      <span class="axis" style="right:6px;top:50%">roll +</span>
-      <span class="axis" style="left:50%;top:4px">tilt up</span>
-      <span class="axis" style="left:50%;bottom:4px">tilt down</span>
+      <span class="axis" style="left:6px;top:50%">dark ↩</span>
+      <span class="axis" style="right:6px;top:50%">↪ bright</span>
+      <span class="axis" style="left:50%;top:4px">tilt up — pitch high</span>
+      <span class="axis" style="left:50%;bottom:4px">tilt down — pitch low</span>
     </div>
     <div class="rowlabel"><span>yaw (pan)</span><span id="yawval">0°</span></div>
     <input id="yaw" type="range" min="-90" max="90" value="0">
-    <div class="rowlabel"><span></span></div>
-    <div class="btnrow" style="grid-template-columns:1fr">
+    <div class="rowlabel"><span>index finger bend — volume</span><b id="flexval">0.00</b></div>
+    <input type="range" id="flex" min="0" max="1" step="0.01" value="0">
+    <div class="rowlabel"><span>middle finger bend — vibrato</span><b id="flex2val">0.00</b></div>
+    <input type="range" id="flex2" min="0" max="1" step="0.01" value="0">
+    <div class="hint">
+      Both bent = ✊ fist, sound on. Both straight = 🖐️ open hand, sound off.
+      Index straight + middle bent = 🤚 next instrument. Hold a posture for
+      ~0.35 s: that delay is what stops a volume swell firing them by accident.
+    </div>
+    <div class="btnrow" style="grid-template-columns:1fr 1fr">
       <button id="reset">reset hand (r)</button>
+      <button data-ev="scene">🎬 next scene (n)</button>
     </div>
   </div>
 
@@ -106,6 +116,8 @@
         <button data-ins="strings">🎻 Strings</button>
         <button data-ins="bell">🔔 Bell</button>
         <button data-ins="flute">🎶 Flute</button>
+        <button data-ins="pluck">🪕 Pluck</button>
+        <button data-ins="guitar">🎸 Guitar</button>
       </div>
     </div>
 
@@ -122,10 +134,11 @@
       </div>
       <button id="punch">👊 PUNCH (space)</button>
       <div class="hint">
-        Drag the pad = roll/tilt your hand. <kbd>space</kbd> punch,
+        Drag the pad = roll (brightness) and tilt (pitch).
+        <kbd>space</kbd> wrist flick, <kbd>n</kbd> next scene,
         <kbd>v</kbd> record, <kbd>o</kbd> overdub, <kbd>p</kbd> loop,
         <kbd>g</kbd> granular, <kbd>b</kbd> slices, <kbd>m</kbd> drone,
-        <kbd>l</kbd> live voice, <kbd>1</kbd>–<kbd>5</kbd> instruments.
+        <kbd>l</kbd> live voice, <kbd>1</kbd>–<kbd>7</kbd> instruments.
         Live voice: wear headphones, speak, roll = pitch, motion = echo.
       </div>
     </div>
@@ -163,8 +176,13 @@ function send(obj) { if (connected) ws.send(JSON.stringify(obj)); }
 function sendEvent(name) { send({ type: "event", name }); }
 
 // ---- hand pose ----------------------------------------------------------
-const pose = { roll: 0, pitch: 0, yaw: 0 };
+const pose = { roll: 0, pitch: 0, yaw: 0, flex: 0, flex2: 0 };
 let poseDirty = false;
+function setFlex(which, v) {
+  pose[which] = Math.max(0, Math.min(1, v));
+  poseDirty = true;
+  document.getElementById(which + "val").textContent = pose[which].toFixed(2);
+}
 function setPose(roll, pitch, yaw) {
   if (roll !== null) pose.roll = Math.max(-90, Math.min(90, roll));
   if (pitch !== null) pose.pitch = Math.max(-90, Math.min(90, pitch));
@@ -189,20 +207,27 @@ pad.addEventListener("pointerdown", (e) => { dragging = true; pad.setPointerCapt
 pad.addEventListener("pointermove", (e) => { if (dragging) padPose(e); });
 pad.addEventListener("pointerup", () => { dragging = false; });
 yawSlider.addEventListener("input", () => setPose(null, null, +yawSlider.value));
-document.getElementById("reset").onclick = () => setPose(0, 0, 0);
+const flexSlider = document.getElementById("flex"), flex2Slider = document.getElementById("flex2");
+flexSlider.addEventListener("input", () => setFlex("flex", +flexSlider.value));
+flex2Slider.addEventListener("input", () => setFlex("flex2", +flex2Slider.value));
+document.getElementById("reset").onclick = () => {
+  setPose(0, 0, 0);
+  flexSlider.value = flex2Slider.value = 0;
+  setFlex("flex", 0); setFlex("flex2", 0);
+};
 
 // ---- buttons ------------------------------------------------------------
 document.querySelectorAll("[data-ev]").forEach((b) => (b.onclick = () => sendEvent(b.dataset.ev)));
 document.querySelectorAll("[data-ins]").forEach((b) => (b.onclick = () => sendEvent("instrument:" + b.dataset.ins)));
 document.getElementById("punch").onclick = () => sendEvent("punch");
 
-const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live" };
-const INS = ["saw", "organ", "strings", "bell", "flute"];
+const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene" };
+const INS = ["saw", "organ", "strings", "bell", "flute", "pluck", "guitar"];
 document.addEventListener("keydown", (e) => {
   if (e.repeat) return;
   const k = e.key.toLowerCase();
   if (KEYS[k]) { sendEvent(KEYS[k]); e.preventDefault(); }
-  else if (k >= "1" && k <= "5") sendEvent("instrument:" + INS[+k - 1]);
+  else if (k >= "1" && k <= "7") sendEvent("instrument:" + INS[+k - 1]);
   else if (k === "r") setPose(0, 0, 0);
 });
 

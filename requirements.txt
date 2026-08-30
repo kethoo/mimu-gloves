@@ -2,6 +2,8 @@ numpy
 sounddevice   # real-time duplex audio via PortAudio
 websockets    # browser frontend (python main.py --web)
 bleak         # Bluetooth LE: --ble, --scan, diagnose.py
+python-rtmidi # --midi only: streams notes/CCs to a DAW (see midi_out.py).
+              # Everything else runs without it; the import is lazy.
 
 # No fusion library (e.g. imufusion) is needed: the BNO08x fuses on-chip
 # and sends finished orientation.

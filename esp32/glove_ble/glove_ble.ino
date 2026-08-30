@@ -11,14 +11,16 @@
 // This firmware NEVER fabricates motion. If the sensor is missing it keeps
 // retrying init and reports status=0 so the laptop can say so plainly.
 //
-// Wiring (flex sensors): 3V3 -> flex -> GPIO34 -> 47k -> GND
-//                        3V3 -> flex -> GPIO35 -> 47k -> GND
+// Wiring (flex sensors): 3V3 -> flex -> GPIO34 -> 15k -> GND
+//                        3V3 -> flex -> GPIO35 -> 15k -> GND
 //
-// Packet format (36 bytes, little-endian, must match ble_receiver.py):
+// Packet format (40 bytes, little-endian, must match ble_receiver.py):
 //   float roll, pitch, yaw;  // degrees, absolute (laptop zeroes them)
 //   float lax, lay, laz;     // linear acceleration, m/s^2 (gravity removed)
 //   float status;            // 1 = live sensor, 0 = sensor not detected
 //   float flex, flex2;       // raw ADC 0..4095 from the two flex dividers
+//   float scenePresses;      // running count of short button presses; the
+//                            // laptop advances one scene per increment
 
 #include <Adafruit_BNO08x.h>
 #include <ESP_I2S.h>
@@ -38,10 +40,17 @@
 #define BNO_RST 4
 // Flex sensor divider. GPIO34 is input-only and on ADC1, which (unlike ADC2)
 // keeps working while the BLE radio is active.
+// The divider only swings ~212 of 4095 counts end to end (a 13-16k sensor
+// into a 15k leg is 0.17 V), and raw ESP32 ADC noise measured ~50 counts —
+// a quarter of the whole usable range. Averaging N samples cuts random noise
+// by sqrt(N), so 16 reads takes it to ~13 counts. 32 reads per loop at 50 Hz
+// is a rounding error against the BLE and I2S work.
+#define FLEX_OVERSAMPLE 16
 #define FLEX_PIN  34
 #define FLEX2_PIN 35   // second finger; ADC1, input-only
 // Record button, status LED and the INMP441 microphone.
 #define BTN_PIN     18
+#define HOLD_MS     400   // press longer than this records; shorter = next scene
 #define LED_PIN     19
 #define I2S_SCK     33
 #define I2S_WS      25
@@ -72,6 +81,7 @@ int reEnableCount = 0;      // failed soft recoveries before a hard re-init
 float roll = 0, pitch = 0, yaw = 0;
 float lax = 0, lay = 0, laz = 0;
 float flex = 0, flex2 = 0;  // smoothed raw ADC; the laptop calibrates these
+uint32_t scenePresses = 0;  // running count of short button presses
 
 // Microphone / recording state.
 I2SClass i2s;
@@ -175,6 +185,13 @@ void updateLed() {
   else if (ledMode == 2) on = (t / 400) % 2;   // sending: slow blink
   else if (ledMode == 3) on = (t / 120) % 2;   // error: fast blink
   digitalWrite(LED_PIN, on);
+}
+
+// Oversampled flex read: see FLEX_OVERSAMPLE above for why this matters.
+int readFlex(int pin) {
+  uint32_t sum = 0;
+  for (int i = 0; i < FLEX_OVERSAMPLE; i++) sum += analogRead(pin);
+  return (int)(sum / FLEX_OVERSAMPLE);
 }
 
 bool buttonHeld() {
@@ -336,10 +353,26 @@ void loop() {
 
   updateLed();
 
-  // Hold the button to record. Audio capture takes priority over the sensor
-  // stream: a few dropped orientation frames cost nothing, a gap in the
-  // recording is audible.
-  bool held = micOK && buttonHeld();
+  // One button, two jobs: a short press asks the laptop for the next scene,
+  // holding it records. Recording only begins once the press passes HOLD_MS,
+  // so a tap can never start a stray take.
+  //
+  // The scene press is reported as a running count rather than a one-frame
+  // pulse: a dropped BLE notification would silently swallow a pulse, but the
+  // laptop notices a count that has moved on whenever the next packet lands.
+  bool btn = buttonHeld();
+  static bool prevBtn = false;
+  static uint32_t pressStart = 0;
+  if (btn && !prevBtn) pressStart = now;
+  if (!btn && prevBtn && !recording && now - pressStart < HOLD_MS) {
+    scenePresses++;
+    Serial.println(">>> short press: next scene");
+  }
+  prevBtn = btn;
+
+  // Audio capture takes priority over the sensor stream: a few dropped
+  // orientation frames cost nothing, a gap in the recording is audible.
+  bool held = micOK && btn && (now - pressStart >= HOLD_MS);
   if (held && !recording) {
     recording = true;
     audioLen = 0;
@@ -398,8 +431,8 @@ void loop() {
   // the laptop can calibrate it to the player's actual bend range. Seed the
   // filter from the first sample — ramping up from 0 produced a fake swing
   // that looked like a real bend to the laptop's auto-calibration.
-  int flexRaw = analogRead(FLEX_PIN);
-  int flex2Raw = analogRead(FLEX2_PIN);
+  int flexRaw = readFlex(FLEX_PIN);
+  int flex2Raw = readFlex(FLEX2_PIN);
   static bool flexInit = false;
   if (!flexInit) {
     flex = flexRaw;
@@ -424,8 +457,9 @@ void loop() {
 
   if (!imuPresent) roll = pitch = yaw = lax = lay = laz = 0;
 
-  float pkt[9] = {roll,      pitch, yaw, lax, lay, laz,
-                  imuPresent ? 1.0f : 0.0f, flex, flex2};
+  float pkt[10] = {roll,      pitch, yaw, lax, lay, laz,
+                   imuPresent ? 1.0f : 0.0f, flex, flex2,
+                   (float)scenePresses};
   sensorChar->setValue((uint8_t *)pkt, sizeof(pkt));
   sensorChar->notify();
 }

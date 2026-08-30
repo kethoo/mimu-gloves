@@ -18,7 +18,10 @@ from sensors import GloveSource, SensorFrame
 
 PORT = 8765
 
-ALLOWED_EVENTS = {"punch", "record", "overdub", "loop", "granular", "slices", "mute", "live"}
+ALLOWED_EVENTS = {
+    "punch", "record", "overdub", "loop", "granular", "slices", "mute", "live",
+    "scene",
+}
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -68,6 +71,13 @@ class WebGloveSource(GloveSource):
                         t.roll = _clamp(msg.get("roll", t.roll), -90, 90)
                         t.pitch = _clamp(msg.get("pitch", t.pitch), -90, 90)
                         t.yaw = _clamp(msg.get("yaw", t.yaw), -90, 90)
+                        # Finger bend drives volume and every posture, so the
+                        # browser needs to supply it to exercise them without
+                        # the glove plugged in.
+                        if msg.get("flex") is not None:
+                            t.flex = _clamp(msg["flex"], 0.0, 1.0)
+                        if msg.get("flex2") is not None:
+                            t.flex2 = _clamp(msg["flex2"], 0.0, 1.0)
                     elif kind == "event":
                         name = msg.get("name", "")
                         if name in ALLOWED_EVENTS or name.startswith("instrument:"):

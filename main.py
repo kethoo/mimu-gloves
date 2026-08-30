@@ -9,6 +9,10 @@ With the hardware glove:
     python main.py --ble --web glove plays; browser picks instruments/modes
     python main.py --ble       glove only
     python main.py --scan      list BLE devices; check the glove is advertising
+
+Add --midi to any of the above to also stream notes and CCs to a DAW (see
+midi_out.py). The built-in synth keeps playing; --midi is an extra output,
+not a replacement, so you can A/B the two.
 """
 
 from __future__ import annotations
@@ -23,6 +27,15 @@ from sensors import DemoGloveSource, SimulatedGloveSource
 from synth import GloveSynth
 
 CONTROL_RATE = 100  # Hz
+
+
+def _flag_value(flag: str) -> str | None:
+    """Value of a `--flag VALUE` argument, or None if absent."""
+    if flag in sys.argv:
+        i = sys.argv.index(flag)
+        if i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
 
 
 def scan() -> None:
@@ -86,18 +99,29 @@ def main() -> None:
         source = SimulatedGloveSource()
         print(
             "Keyboard glove:\n"
-            "  a/d roll (musical pitch + voice speed)   w/s tilt (brightness)\n"
-            "  q/e yaw (pan)                            space punch (drum hit)\n"
+            "  a/d roll (brightness + voice scrub)      w/s tilt (musical pitch)\n"
+            "  q/e yaw (pan)                            space wrist flick (drum)\n"
+            "  [/] index bend (volume)                  ;/' middle bend (vibrato)\n"
+            "  n next scene                             m mute drone\n"
             "  v record/stop mic (becomes voice loop)   o overdub a layer on top\n"
             "  p voice loop on/off                      g granular (roll = scrub)\n"
-            "  b slice mode (punch fires chunks)        m mute drone\n"
-            "  l live voice (speak, gestures warp it — wear headphones!)\n"
-            "  1-5 instrument (saw/organ/strings/bell/flute)\n"
+            "  b slice mode (punch fires chunks)        l live voice (headphones!)\n"
+            "  1-7 instrument (saw/organ/strings/bell/flute/pluck/guitar)\n"
             "  r reset                                  x quit\n"
+            "Postures: both fingers bent = fist (sound on), both straight =\n"
+            "open hand (sound off), index straight + middle bent = next\n"
+            "instrument. Hold one ~0.35s for it to register.\n"
             "Tip: python main.py --web gives you a visual frontend instead.\n"
         )
 
+    midi = None
+    if "--midi" in sys.argv:
+        from midi_out import MidiOut
+
+        midi = MidiOut(_flag_value("--midi-port"))
+
     synth = GloveSynth()
+    mapping.apply_scene(synth)  # scene 1 sets instrument, scale and modes
     source.start()
     synth.start()
     try:
@@ -106,6 +130,12 @@ def main() -> None:
             mapping.apply(frame, synth)
             for event in source.drain_events():
                 mapping.handle_event(event, synth)
+                if midi is not None:
+                    midi.handle_event(event)
+            if midi is not None:
+                # Reads the targets mapping.apply just set, so the DAW hears
+                # the same gesture the local synth does.
+                midi.update(synth)
             take = source.take_audio()
             if take is not None:
                 synth.set_loop(*take)
@@ -129,11 +159,31 @@ def main() -> None:
                 def _f(v):
                     return f"{v:4.2f}" if v is not None else "  - "
 
+                # Raw ADC and calibration span alongside the calibrated value.
+                # A flex channel reads "-" until it has seen FLEX_MIN_SPAN of
+                # swing, and without the raw number there is no way to tell a
+                # dead sensor from one that simply has not been bent far
+                # enough yet — the two look identical.
+                spans = getattr(source, "flex_spans", None)
+                if spans is None:
+                    spans = getattr(getattr(source, "pose", None), "flex_spans", None)
+
+                def _raw(v, span):
+                    if v is None:
+                        return ""
+                    return f"[raw {v:4.0f} span {span:4.0f}]"
+
+                extra = ""
+                if frame.flex_raw is not None or frame.flex2_raw is not None:
+                    s1, s2 = spans if spans else (0.0, 0.0)
+                    extra = (f"  {_raw(frame.flex_raw, s1)}"
+                             f" {_raw(frame.flex2_raw, s2)}")
+
                 print(
                     f"\rroll {frame.roll:+6.1f}  pitch {frame.pitch:+6.1f}  "
                     f"yaw {frame.yaw:+6.1f}  motion {frame.motion:4.2f}  "
                     f"flex1 {_f(frame.flex)} (volume)  "
-                    f"flex2 {_f(frame.flex2)} (vibrato)   ",
+                    f"flex2 {_f(frame.flex2)} (vibrato){extra}   ",
                     end="",
                     flush=True,
                 )
@@ -143,6 +193,8 @@ def main() -> None:
     finally:
         source.stop()
         synth.stop()
+        if midi is not None:
+            midi.close()
         print("\nBye.")
 
 
