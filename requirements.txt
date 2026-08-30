@@ -2,6 +2,7 @@ numpy
 sounddevice   # real-time duplex audio via PortAudio
 websockets    # browser frontend (python main.py --web)
 bleak         # Bluetooth LE: --ble, --scan, diagnose.py
+pyserial      # serial monitor for the ESP32 (monitor.py)
 python-rtmidi # --midi only: streams notes/CCs to a DAW (see midi_out.py).
               # Everything else runs without it; the import is lazy.
 

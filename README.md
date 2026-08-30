@@ -35,6 +35,10 @@ a comfortable wrist, not the ±90° the sensor can report — mapping against 90
 leaves most of the musical range unreachable in practice. Lower them for a
 twitchier instrument, raise them for finer control.
 
+`FLEX_CURVE` and `VOL_RANGE_DB` in the same file shape how the index finger
+drives volume — see **How gestures map to sound** below. `SCENES` and `SCALES`
+define what each scene plays and in what key.
+
 **Nothing responding to your hand?** The firmware never fabricates motion.
 If the ESP32 cannot see the BNO08x it sends a status flag of 0 and no
 orientation at all, and `ble_receiver.py` says so plainly instead of feeding
@@ -135,7 +139,7 @@ Needs `python-rtmidi`. The import is lazy, so everything else runs without it.
 | ↪️ Rotate wrist            | roll          | Filter cutoff / brightness, and the voice-loop scrub |
 | ↕️ Tilt hand up/down       | pitch         | Musical pitch, quantized to the scene's scale |
 | 👈 Point left/right        | yaw           | Stereo pan                      |
-| 🤏 Bend index finger       | flex (GPIO34) | Volume / expression, like a breath controller |
+| 🤏 Bend index finger       | flex (GPIO34) | Volume / expression, on a 34 dB curve (see below) |
 | ✊ Fist (both fingers bent) | flex + flex2  | Activate the sound              |
 | 🖐️ Open hand (both straight) | flex + flex2 | Deactivate it                   |
 | 🤚 Index straight, middle bent | flex + flex2 | Next instrument             |
@@ -150,6 +154,16 @@ press moves the whole setup — `Lead` (saw, pentatonic), `Cathedral` (organ,
 minor), `Bowed` (strings, dorian), `Chimes` (bell, whole-tone), `Amp`
 (guitar, minor), `Cloud` (strings, whole-tone, granular). Edit `SCENES` in
 `mapping.py`.
+
+**Volume responds on a dB curve, not a linear one.** Loudness is perceived
+roughly logarithmically, so a linear amplitude ramp wastes the top half of the
+bend — going from 0.5 to 1.0 amplitude is a mere 6 dB, which barely reads as a
+change. `mapping.py` instead maps the finger across `VOL_RANGE_DB` (34 dB), so
+every part of the travel does something audible. `FLEX_CURVE` (0.6) then
+shapes *where* the sensitivity sits: below 1 it expands the early part of the
+bend, where a finger has the most control. Lower it to 0.4 for a hair trigger.
+Note that sensitivity amplifies noise as well as signal, which is why the
+firmware oversamples the ADC — see **Flex sensors** below.
 
 **Two honest limits.** "Up/down" and "left/right" are tilt and yaw, not
 translation: the BNO08x reports orientation only, and deriving position would
@@ -184,9 +198,12 @@ against a link that manages a fraction of that, plus buffering latency), but
 a finished take only has to *arrive*. Capture on the glove, transfer
 afterwards, play on the laptop.
 
-Takes are up to 8 seconds, held in the module's PSRAM — internal RAM has no
-room for the buffer beside the BLE stack. Without PSRAM it falls back to 2
-seconds. `mapping.py`'s `record` event still drives the laptop microphone,
+Takes are up to 8 seconds when the module has PSRAM — internal RAM has no
+room for a buffer that size beside the BLE stack — and fall back to 2 seconds
+when it does not. Check which you have: a board without it prints
+`PSRAM ID read error ... chip not found` at boot, followed by
+`No PSRAM - falling back to a 2 s buffer`. Not every ESP32 dev board has the
+chip, despite the option existing in the build. `mapping.py`'s `record` event still drives the laptop microphone,
 which is unchanged and lower latency for the live modes.
 
 ## Voice looping (laptop mic, gestures shape it)
@@ -195,9 +212,10 @@ Press `v` to record from the microphone, `v` again to stop — the take
 immediately starts looping through the gesture chain: roll left/right slows
 down/speeds up the voice (with pitch shift), tilt darkens/brightens it, yaw
 pans it, and flex — or motion, with no flex sensor — controls its volume.
-`p` pauses the loop, `m` mutes the drone tone so you hear the voice alone. On the hardware glove this becomes a
-physical record button (a press edge sent in the BLE packet — hook noted in
-`ble_receiver.py`). macOS will ask for microphone permission the first time.
+`p` pauses the loop, `m` mutes the drone tone so you hear the voice alone.
+On the hardware glove, holding the physical button records to the glove's own
+microphone instead (see above); a short press cycles scenes. macOS will ask
+for microphone permission the first time you use the laptop mic.
 
 Button-like gestures travel as an **event queue** (`GloveSource.events`),
 separate from the continuous orientation stream, so a press is never missed
@@ -241,6 +259,11 @@ The simulator (`sensors.py`) and the BLE receiver (`ble_receiver.py`) emit
 identical `SensorFrame` objects, so switching to real hardware is just
 `python main.py --ble` — mapping and synth code don't change.
 
+The same symmetry applies on the output side: `midi_out.py` is a second sink
+that reads the target values `mapping.apply` already set on the synth, rather
+than mapping gestures a second time. One place turns a gesture into musical
+intent, so the local synth and the DAW cannot disagree.
+
 ## Why the glove never appears in macOS Bluetooth settings
 
 It uses Bluetooth **Low Energy**, which does not pair with the OS. System
@@ -272,15 +295,47 @@ Both pins are on ADC1, which keeps working while the BLE radio is active
 (ADC2 pins do not), and GPIO34–39 are input-only — fine for sensors, never
 usable as outputs. That leaves GPIO36 and 39 for two more fingers.
 
+**The usable swing is small, and that drives several design choices.** These
+sensors measure 13–16 kΩ end to end, so into a 15 kΩ leg the pin moves
+3.3·15/(13+15) − 3.3·15/(16+15) = 0.17 V — only **212 of 4095 ADC counts**.
+Measured on the bench, flex 1 swings 201 counts on a full bend, which is that
+prediction within 5%. A 15 kΩ resistor is also the right pick: maximum swing
+across a 13–16 kΩ sensor peaks at 14.4 kΩ and gives the same 212 counts, so
+there is nothing to gain by changing it.
+
+Because the signal is small, raw ADC noise matters enormously. It measured
+~50 counts — a quarter of the entire usable range, leaving about 4
+distinguishable levels. The firmware therefore averages `FLEX_OVERSAMPLE`
+(16) reads per sample, which cut noise to **3 counts** and took it to roughly
+70 usable levels. That is what makes an expressive volume curve possible at
+all; without it, any added sensitivity just amplifies jitter.
+
 The ESP32 sends the raw ADC value and the laptop self-calibrates: it widens
 its min/max as you bend, so no fixed thresholds are needed. Until it sees a
-swing of at least `FLEX_MIN_SPAN` (80 ADC counts) it reports "no flex
-sensor" and volume falls back to hand motion — it never guesses. If bending
-makes the sound quieter instead of louder, flip `FLEX_INVERT` in
-`ble_receiver.py`.
+swing of at least `FLEX_MIN_SPAN` (80 counts, i.e. ~38% of the physical
+ceiling) it reports "no flex sensor" and volume falls back to hand motion —
+it never guesses.
 
-`python diagnose.py` prints the live flex ADC value and the total range seen,
-which is the quickest way to check the sensor and pick a divider resistor.
+Three knobs in `ble_receiver.py` for when the hardware misbehaves:
+
+- **`FLEX_INVERT`** — flip if bending makes the sound quieter instead of louder.
+- **`FLEX_SWAP`** — flip if bending the *index* finger moves vibrato rather
+  than volume, i.e. the two sensors are on each other's pins. Cheaper than
+  unpicking the glove.
+- **`FLEX_VALID_MIN`** (800 counts) — readings below this are electrically
+  impossible for this divider and mean the connection dropped out, not that a
+  finger bent. They have to be *rejected*, not merely ignored: calibration
+  tracks the min and max ever seen, so a single 96-count dropout permanently
+  rescales the channel and squashes every real bend into the bottom tenth of
+  its range for the rest of the session. Rejected samples hold the last good
+  value and increment a `dropouts` counter.
+
+`python diagnose.py` prints the live flex ADC value and the total range seen.
+`python main.py --ble` also appends `[raw NNNN span NNN]` to its status line,
+which distinguishes the two failure modes that otherwise look identical: a
+channel reading `-` with raw pinned at 0 is a dead connection, while `-` with
+raw moving but span under 80 is a live sensor that just has not been bent far
+enough yet.
 
 ## Is it the code or the hardware?
 
@@ -300,6 +355,27 @@ hardware fault (power, wiring or a latched sensor), not a firmware bug. Try a
 full power cycle first: unplugging USB for ~10 s clears states that toggling
 RST does not.
 
+`esp32/flex_test/` does the same job for the flex sensors: nothing but
+`analogRead` on GPIO34/35, with no BLE, I2S or IMU running. It exists because
+the mic occupies GPIO32/33, which are ADC1 channels 4 and 5 — the same ADC1
+block as the flex pins on channels 6 and 7 — so "is the I2S peripheral
+breaking the ADC?" is a fair question this settles in one flash. It prints a
+running min/max/swing and the pin voltage.
+
+Cheaper than flashing anything: **jumper 3V3 straight to GPIO34** and watch
+`monitor.py`. It should read ~4095. That one test separates "the pin or ADC is
+broken" from "the divider is not delivering voltage", and needs no multimeter.
+
+```bash
+python monitor.py        # live firmware heartbeat; finds the port itself
+python monitor.py 20     # ...for 20 seconds
+```
+
+`monitor.py` opens the port without asserting DTR/RTS, which are wired to EN
+and IO0 on the auto-reset circuit — opening a port the default way can hold
+the ESP32 in reset or drop it into the bootloader, which looks exactly like a
+dead board printing nothing.
+
 ## Finding intermittent connections
 
 ```bash
@@ -314,7 +390,22 @@ the 400 kHz I2C clock, not a loose jumper — see the stall trap below. At
 100 kHz the connection held indefinitely. Only if dropouts persist is it
 worth wiggling one wire at a time to find a bad contact.
 
-The flex sensor cannot electrically disturb the IMU — it draws ~55 µA through
+**A shared connection fails in lockstep.** When both flex channels read 0 and
+then both came back after reseating a wire and then both died again on being
+touched, the common 3V3 leg was the culprit — two sensors do not fail
+identically three times by coincidence. The same loose rail also browned out
+the board mid-flash twice, which presents as the USB port *disappearing and
+re-enumerating* partway through a write. If a flash dies at a random
+percentage and the port vanishes, suspect power before the cable.
+
+**Sanity-check a reading against the circuit before trusting it.** A flex
+channel briefly showed a 1700-count swing, which looked like an unusually
+healthy sensor next to its 201-count neighbour. It was the opposite: a
+13–16 kΩ sensor into a 15 kΩ leg *cannot* swing more than ~212 counts, so the
+wide reading was the connection going open, and the "weak" one was the sensor
+working exactly as designed.
+
+The flex sensor cannot electrically disturb the IMU — it draws ~120 µA through
 the 15k divider, GPIO34 is on ADC1 (independent of the radio), and it shares
 no pins with I2C. If adding it breaks the IMU, the cause is mechanical
 (disturbed jumpers) or a slipped jumper shorting 3V3 to GND, which would sag
@@ -334,15 +425,27 @@ Avoid GPIO0/2/12/15 (boot strapping), GPIO6–11 (flash), and **GPIO16/17** —
 measured on this board, GPIO16 reads LOW with the pull-up enabled and nothing
 attached, because it belongs to the PSRAM on WROVER modules.
 
-Flash with **both** options: `PSRAM=enabled` (the audio buffer lives there)
-and `UploadSpeed=115200` (the USB adapter fails at the default 921600).
-Dropping either one is a silent way to waste ten minutes:
+`UploadSpeed=115200` is required — the USB adapter fails at the default
+921600, and omitting it is a silent way to waste ten minutes. Add
+`PSRAM=enabled` **only if your module actually has the chip**; on a board
+without it the option is harmless but pointless, and the boot log will tell
+you which you have.
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32:PSRAM=enabled esp32/glove_ble
+arduino-cli compile --fqbn esp32:esp32:esp32 esp32/glove_ble
 arduino-cli upload -p "$(ls /dev/cu.usbserial-* | head -1)" \
-  --fqbn esp32:esp32:esp32:PSRAM=enabled,UploadSpeed=115200 esp32/glove_ble
+  --fqbn esp32:esp32:esp32:UploadSpeed=115200 esp32/glove_ble
 ```
+
+Note the option separator: options follow the third colon and are joined by
+commas (`esp32:esp32:esp32:PSRAM=enabled,UploadSpeed=115200`). A comma in
+place of that colon gives `Invalid FQBN: ... contains an invalid character`.
+
+**If an upload prints nothing, check for a stray `esptool` before rerunning**
+(`pgrep -fl esptool`). A hung one holds the port open, and the next attempt
+fails with "port busy" rather than telling you why. Only one process may own
+the serial port at a time — a running `monitor.py` or `main.py --ble` will
+also break a flash, and two readers silently steal bytes from each other.
 
 macOS renames the port on each replug (`usbserial-10`, `-110`, …), hence the
 `ls` rather than a fixed path.
@@ -403,6 +506,9 @@ the pose from the glove and merges control events from both.
 - **numpy** — block-wise DSP in the audio callback
 - **websockets** — browser frontend transport (`--web`)
 - **bleak** — Bluetooth LE client (`--ble`, `--scan`, `diagnose.py`)
+- **pyserial** — serial monitor for the ESP32 (`monitor.py`)
+- **python-rtmidi** — MIDI out (`--midi` only; the import is lazy, so
+  everything else runs without it)
 
 No sensor-fusion library is needed: the BNO08x fuses on-chip and sends
 finished orientation, so the laptop only zeroes and smooths it.

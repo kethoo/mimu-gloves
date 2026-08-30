@@ -16,6 +16,10 @@ import asyncio
 import struct
 import time
 
+# Single source of truth for the flex thresholds — diagnose and the live
+# receiver must agree, or this reports "good" on a channel main.py rejects.
+from ble_receiver import FLEX_MIN_SPAN, FLEX_VALID_MIN
+
 CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 DEVICE_NAME = "MIMU-GLOVE"
 
@@ -126,21 +130,33 @@ async def main() -> None:
             continue
         span = hi - lo
         print(f"\n{label} ({pin}): range {lo:.0f}..{hi:.0f}, span {span:.0f}")
-        # Divider is 3V3 -> flex -> pin -> 47k -> GND, so the resting value
+        # Divider is 3V3 -> flex -> pin -> 15k -> GND, so the resting value
         # alone says which leg is broken.
         if hi < 100:
             print(f"  -> STUCK AT 0: nothing is pulling {pin} up. Check the 3V3 leg\n"
-                  f"     and the leg into {pin}. (The 47k pulldown is clearly fine —\n"
+                  f"     and the leg into {pin}. (The 15k pulldown is clearly fine —\n"
                   f"     it is what is holding the pin at 0.)")
         elif lo > 4000:
-            print(f"  -> STUCK AT MAX: {pin} sits at 3.3V. The 47k pulldown to GND\n"
+            print(f"  -> STUCK AT MAX: {pin} sits at 3.3V. The 15k pulldown to GND\n"
                   f"     is missing or disconnected.")
-        elif span < 150:
-            print("  -> CONNECTED but not swinging: the divider works, yet bending\n"
-                  "     does not change it. Either the bend is not reaching the\n"
-                  "     resistive strip, or the sensor is damaged.")
+        elif lo < FLEX_VALID_MIN:
+            # A 13-16k sensor into a 15k leg cannot go below ~1120 counts even
+            # at 40k, so a low minimum is an open circuit, not a deep bend —
+            # and it looks like a huge healthy span if you only read the range.
+            print(f"  -> INTERMITTENT: dipped to {lo:.0f}, which this divider\n"
+                  f"     cannot produce. That is the connection dropping out, not\n"
+                  f"     a bend. Ignore the span above; fix the joint on {pin}\n"
+                  f"     or its 3V3 leg first.")
+        elif span < FLEX_MIN_SPAN:
+            print(f"  -> CONNECTED but barely swinging (span {span:.0f} < "
+                  f"{FLEX_MIN_SPAN:.0f}): the divider\n"
+                  "     works, yet bending hardly changes it. Either the bend is not\n"
+                  "     reaching the resistive strip, or the sensor is damaged.")
         else:
-            print("  -> good swing; usable as a control.")
+            # ~212 counts is the physical ceiling for a 13-16k sensor here, so
+            # anything near it is as good as this hardware gets.
+            print(f"  -> good swing ({span:.0f} counts; ~212 is the ceiling for a\n"
+                  "     13-16k sensor into a 15k leg). Usable as a control.")
     print()
     if h.events:
         print("dropout timeline:")

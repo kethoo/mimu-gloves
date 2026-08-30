@@ -6,15 +6,15 @@
 // as the flex pins on 34/35. That should not disturb analogRead, but this
 // sketch removes the question entirely.
 //
-// Wiring under test: 3V3 -> flex -> GPIO34 -> 47k -> GND   (same for 35)
+// Wiring under test: 3V3 -> flex -> GPIO34 -> 15k -> GND   (same for 35)
 //
 // Reading it:
 //   both ~0, steady         no voltage arriving. The 3V3 leg or the sensor
 //                           is open — GPIO34-39 have no internal pull-up, so
-//                           a steady 0 means the 47k pull-down is winning
+//                           a steady 0 means the 15k pull-down is winning
 //                           with nothing feeding the top of the divider.
 //   both ~4095              the pin is tied to 3V3 — pull-down missing.
-//   drifting noise, no 47k  pin genuinely floating.
+//   drifting noise, no 15k  pin genuinely floating.
 //   moves when you bend     everything works; the fault was elsewhere.
 //
 // Jumper 3V3 straight to GPIO34 to prove the pin and ADC in isolation:
