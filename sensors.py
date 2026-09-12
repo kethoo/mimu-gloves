@@ -9,14 +9,18 @@ BleGloveSource in main.py and nothing else changes.
 from __future__ import annotations
 
 import math
-import select
 import sys
-import termios
 import threading
 import time
-import tty
 from collections import deque
 from dataclasses import dataclass, field
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import select
+    import termios
+    import tty
 
 
 @dataclass
@@ -217,6 +221,20 @@ class SimulatedGloveSource(GloveSource):
         self._smooth_toward_target(self.RATE)
 
     def _read_keys(self) -> None:
+        if sys.platform == "win32":
+            self._read_keys_windows()
+        else:
+            self._read_keys_posix()
+
+    def _read_keys_windows(self) -> None:
+        while self._running:
+            if not msvcrt.kbhit():
+                time.sleep(0.05)
+                continue
+            c = msvcrt.getch().decode(errors="ignore").lower()
+            self._handle_key(c)
+
+    def _read_keys_posix(self) -> None:
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
@@ -225,64 +243,67 @@ class SimulatedGloveSource(GloveSource):
                 if not select.select([sys.stdin], [], [], 0.05)[0]:
                     continue
                 c = sys.stdin.read(1).lower()
-                if c == "h":
-                    # One keyboard, two hands: switch which one the keys move.
-                    # Lets the whole two-glove mapping be played and tested
-                    # before a second board exists.
-                    self._active = 1 - self._active
-                    print("\n[keys now drive the "
-                          + ("VOICE" if self._active else "INSTRUMENT")
-                          + " hand]")
-                    continue
-                t = self._target_voice if self._active else self._target
-                tag = "V:" if self._active else ""
-                step = 15.0
-                if c == "a":
-                    t.roll = max(t.roll - step, -90)
-                elif c == "d":
-                    t.roll = min(t.roll + step, 90)
-                elif c == "w":
-                    t.pitch = min(t.pitch + step, 90)
-                elif c == "s":
-                    t.pitch = max(t.pitch - step, -90)
-                elif c == "q":
-                    t.yaw = max(t.yaw - step, -90)
-                elif c == "e":
-                    t.yaw = min(t.yaw + step, 90)
-                elif c == " ":
-                    self.events.append(tag + "punch")
-                elif c == "v":
-                    self.events.append(tag + "record")
-                elif c == "o":
-                    self.events.append(tag + "overdub")
-                elif c == "p":
-                    self.events.append(tag + "loop")
-                elif c == "g":
-                    self.events.append(tag + "granular")
-                elif c == "b":
-                    self.events.append(tag + "slices")
-                elif c == "m":
-                    self.events.append(tag + "mute")
-                elif c == "l":
-                    self.events.append(tag + "live")
-                elif c == "n":
-                    self.events.append(tag + "scene")
-                elif c in "[]":
-                    # index finger bend: volume, and half of every posture
-                    t.flex = min(max((t.flex or 0.0) + (0.2 if c == "]" else -0.2), 0.0), 1.0)
-                elif c in ";'":
-                    t.flex2 = min(max((t.flex2 or 0.0) + (0.2 if c == "'" else -0.2), 0.0), 1.0)
-                elif c in "1234567":
-                    names = ["saw", "organ", "strings", "bell", "flute",
-                             "pluck", "guitar"]
-                    self.events.append(tag + "instrument:" + names[int(c) - 1])
-                elif c == "r":
-                    t.roll = t.pitch = t.yaw = 0.0
-                    t.flex = t.flex2 = None
-                elif c == "x":
-                    self.quit_requested = True
+                self._handle_key(c)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    def _handle_key(self, c: str) -> None:
+        if c == "h":
+            # One keyboard, two hands: switch which one the keys move.
+            # Lets the whole two-glove mapping be played and tested
+            # before a second board exists.
+            self._active = 1 - self._active
+            print("\n[keys now drive the "
+                  + ("VOICE" if self._active else "INSTRUMENT")
+                  + " hand]")
+            return
+        t = self._target_voice if self._active else self._target
+        tag = "V:" if self._active else ""
+        step = 15.0
+        if c == "a":
+            t.roll = max(t.roll - step, -90)
+        elif c == "d":
+            t.roll = min(t.roll + step, 90)
+        elif c == "w":
+            t.pitch = min(t.pitch + step, 90)
+        elif c == "s":
+            t.pitch = max(t.pitch - step, -90)
+        elif c == "q":
+            t.yaw = max(t.yaw - step, -90)
+        elif c == "e":
+            t.yaw = min(t.yaw + step, 90)
+        elif c == " ":
+            self.events.append(tag + "punch")
+        elif c == "v":
+            self.events.append(tag + "record")
+        elif c == "o":
+            self.events.append(tag + "overdub")
+        elif c == "p":
+            self.events.append(tag + "loop")
+        elif c == "g":
+            self.events.append(tag + "granular")
+        elif c == "b":
+            self.events.append(tag + "slices")
+        elif c == "m":
+            self.events.append(tag + "mute")
+        elif c == "l":
+            self.events.append(tag + "live")
+        elif c == "n":
+            self.events.append(tag + "scene")
+        elif c in "[]":
+            # index finger bend: volume, and half of every posture
+            t.flex = min(max((t.flex or 0.0) + (0.2 if c == "]" else -0.2), 0.0), 1.0)
+        elif c in ";'":
+            t.flex2 = min(max((t.flex2 or 0.0) + (0.2 if c == "'" else -0.2), 0.0), 1.0)
+        elif c in "1234567":
+            names = ["saw", "organ", "strings", "bell", "flute",
+                     "pluck", "guitar"]
+            self.events.append(tag + "instrument:" + names[int(c) - 1])
+        elif c == "r":
+            t.roll = t.pitch = t.yaw = 0.0
+            t.flex = t.flex2 = None
+        elif c == "x":
+            self.quit_requested = True
 
 
 class DemoGloveSource(GloveSource):

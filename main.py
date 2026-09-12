@@ -25,6 +25,12 @@ explicitly:
 Add --midi to any of the above to also stream notes and CCs to a DAW (see
 midi_out.py). The built-in synth keeps playing; --midi is an extra output,
 not a replacement, so you can A/B the two.
+
+Playing live voice out loud speakers (rather than headphones) doubles your
+voice: the direct air-borne copy plus the processed one, delayed ~25ms by
+the pitch-shifter, beat together into an audible echo. Add --voice-dry to
+skip the pitch-shifter/delay/reverb chain (gate + volume only) for the
+lowest-latency passthrough when you don't need the effects.
 """
 
 from __future__ import annotations
@@ -105,6 +111,7 @@ def scan() -> None:
     settings — BLE peripherals don't pair with the OS — so this is how you
     check that it is powered and advertising."""
     import asyncio
+    import threading
 
     from bleak import BleakScanner
 
@@ -131,7 +138,15 @@ def scan() -> None:
             print("\nRun: python main.py --ble")
 
     print("Scanning for BLE devices (8s)...\n")
-    asyncio.run(run())
+    # Importing sounddevice earlier (for --list-devices/the synth) leaves the
+    # main thread's COM apartment as MAIN_STA — a PortAudio/WASAPI side
+    # effect that persists for the process and that bleak's WinRT backend
+    # then refuses to use ("Thread is configured for Windows GUI but
+    # callbacks are not working"). COM apartments are per-thread, so running
+    # the scan on a fresh thread sidesteps it instead of fighting it.
+    thread = threading.Thread(target=lambda: asyncio.run(run()))
+    thread.start()
+    thread.join()
 
 
 def main() -> None:
@@ -209,6 +224,14 @@ def main() -> None:
         output_device=_resolve_device(_flag_value("--audio-out"), want_output=True),
     )
     print(f"[audio  {synth.describe_devices()}]")
+    if "--voice-dry" in sys.argv:
+        # Skips the pitch-shifter/delay/reverb chain entirely (just gate +
+        # volume survive), avoiding the shifter's ~25ms tap delay. That delay
+        # is what turns into an audible echo when live voice plays out loud
+        # speakers instead of headphones, since the ear then gets the direct
+        # air-borne voice and the delayed processed copy at once.
+        synth.voice_fx_on = False
+        print("[voice FX bypassed — dry passthrough for lowest latency]")
     hand = mapping.HandState()
     voice = voice_mapping.VoiceState()
     mapping.apply_scene(synth, hand)  # scene 1 sets instrument, scale and modes

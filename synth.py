@@ -36,6 +36,8 @@ REVERB_FB = 0.90          # comb feedback. Measured T60 ~1.45 s, a hall
                           # rather than a room; roll dials the wet amount.
 REVERB_AP_G = 0.5         # allpass coefficient: diffusion
 
+LIVE_MIC_GAIN = 4.0   # makeup gain for the live mic input, see _callback
+
 VOICE_DELAY = int(0.28 * SAMPLE_RATE)   # "point" delay time. Its feedback is
                                         # target_echo, i.e. hand motion — wave
                                         # and the repeats ring on longer.
@@ -635,6 +637,13 @@ class GloveSynth:
         live_in = self._live_in
         v_in = loop_block
         if self.live_on and live_in is not None and len(live_in) == frames:
+            # A close-talking laptop/earphone mic measures ~0.15 peak, quiet
+            # next to the recorded-loop path (normalized to 0.5 peak in
+            # _stop_recording). The live path streams continuously and can't
+            # be normalized the same way, so make up the gap with a fixed
+            # gain instead; the tanh soft-clip right below absorbs a loud
+            # talker rather than clipping hard.
+            live_in = live_in * LIVE_MIC_GAIN
             v_in = live_in if v_in is None else v_in + live_in
         if v_in is not None:
             v = self._process_voice(v_in, frames)
