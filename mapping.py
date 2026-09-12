@@ -114,11 +114,25 @@ POSTURE_LO = 0.28    # straighter than this counts as extended
 # 0.84 s below the threshold, so 0.8 s was not enough margin.
 POSTURE_HOLD = {"fist": 0.35, "point": 0.35, "open": 1.00}
 
-_last_step = 0
-_scene = 0
-_posture: str | None = None       # posture currently committed to
-_pending: str | None = None       # posture being held, not yet committed
-_pending_since = 0.0
+class HandState:
+    """Everything `apply` remembers between ticks, for ONE hand.
+
+    This was module-level state until the second glove arrived, and sharing it
+    broke both hands rather than favouring one: two gloves alternating into
+    `apply` reset each other's posture dwell timer every tick, so no posture
+    could ever accumulate its hold time and none of them ever fired.
+    """
+
+    def __init__(self) -> None:
+        self.last_step = 0
+        self.scene = 0
+        self.posture: str | None = None    # posture currently committed to
+        self.pending: str | None = None    # being held, not yet committed
+        self.pending_since = 0.0
+
+
+# The single-glove default, so `apply(frame, synth)` keeps working unchanged.
+_default = HandState()
 
 
 def midi_to_hz(note: float) -> float:
@@ -156,42 +170,44 @@ def _fire_posture(posture: str, synth: GloveSynth) -> None:
         synth.next_instrument()
 
 
-def apply_scene(synth: GloveSynth, announce: bool = True) -> None:
+def apply_scene(synth: GloveSynth, state: HandState | None = None,
+                announce: bool = True) -> None:
     """Install the current scene: instrument, scale and modes together."""
-    global _last_step
-    name, instrument, scale, granular, slices = SCENES[_scene]
+    st = state or _default
+    name, instrument, scale, granular, slices = SCENES[st.scene]
     synth.set_instrument(instrument, announce=False)
     synth.granular_on = granular
     synth.slices_on = slices
     # The new scale may be shorter than the old one.
-    _last_step = min(_last_step, len(SCALES[scale]) - 1)
+    st.last_step = min(st.last_step, len(SCALES[scale]) - 1)
     if announce:
         modes = ", ".join(
             m for m, on in (("granular", granular), ("slices", slices)) if on
         )
         print(
-            f"\n[scene {_scene + 1}/{len(SCENES)}: {name} — {instrument}, "
+            f"\n[scene {st.scene + 1}/{len(SCENES)}: {name} — {instrument}, "
             f"{scale}{', ' + modes if modes else ''}]"
         )
 
 
-def next_scene(synth: GloveSynth) -> None:
-    global _scene
-    _scene = (_scene + 1) % len(SCENES)
-    apply_scene(synth)
+def next_scene(synth: GloveSynth, state: HandState | None = None) -> None:
+    st = state or _default
+    st.scene = (st.scene + 1) % len(SCENES)
+    apply_scene(synth, st)
 
 
-def apply(frame: SensorFrame, synth: GloveSynth) -> None:
-    global _last_step, _posture, _pending, _pending_since
+def apply(frame: SensorFrame, synth: GloveSynth,
+          state: HandState | None = None) -> None:
+    st = state or _default
 
     # ---- postures ---------------------------------------------------------
     posture = _read_posture(frame.flex, frame.flex2)
-    if posture != _pending:
-        _pending, _pending_since = posture, frame.t
+    if posture != st.pending:
+        st.pending, st.pending_since = posture, frame.t
     if posture is None:
-        _posture = None  # leaving a posture re-arms it
-    elif posture != _posture and frame.t - _pending_since >= POSTURE_HOLD[posture]:
-        _posture = posture
+        st.posture = None  # leaving a posture re-arms it
+    elif posture != st.posture and frame.t - st.pending_since >= POSTURE_HOLD[posture]:
+        st.posture = posture
         _fire_posture(posture, synth)
 
     # Playing implies wanting sound. Bending the index past the posture
@@ -202,14 +218,14 @@ def apply(frame: SensorFrame, synth: GloveSynth) -> None:
         synth.set_gate(True)
 
     # ---- continuous control ----------------------------------------------
-    scale = SCALES[SCENES[_scene][2]]
+    scale = SCALES[SCENES[st.scene][2]]
 
     # tilt up/down -> index into the scale, with hysteresis so a hand
     # hovering on a boundary holds its note
     pos = _norm(frame.pitch, PITCH_RANGE) * (len(scale) - 1)
-    if abs(pos - _last_step) > 0.5 + STEP_HYSTERESIS:
-        _last_step = min(max(int(round(pos)), 0), len(scale) - 1)
-    synth.target_freq = midi_to_hz(scale[min(_last_step, len(scale) - 1)])
+    if abs(pos - st.last_step) > 0.5 + STEP_HYSTERESIS:
+        st.last_step = min(max(int(round(pos)), 0), len(scale) - 1)
+    synth.target_freq = midi_to_hz(scale[min(st.last_step, len(scale) - 1)])
 
     # rotate wrist -> cutoff, exponential so it feels even to the ear
     roll_u = _norm(frame.roll, ROLL_RANGE)
@@ -237,8 +253,16 @@ def apply(frame: SensorFrame, synth: GloveSynth) -> None:
     else:
         synth.target_amp = 0.12 + 0.35 * min(frame.motion, 1.0)
 
-    # motion -> echo trails on the live voice: wave your hand, it rings
+    # motion -> delay feedback on the live voice: wave your hand, it rings
     synth.target_echo = 0.15 + 0.55 * min(frame.motion, 1.0)
+
+    # With no voice glove attached, this hand keeps its old live-voice duty so
+    # `l` mode behaves exactly as it did before the second hand existed. When
+    # a voice glove IS driving, voice_mapping owns these and this must not
+    # fight it at the control rate.
+    if not synth.voice_hand:
+        synth.target_voice_pitch = synth.target_rate
+        synth.target_voice_volume = 0.9
 
     # Second finger also adds vibrato while it is not holding a posture. It
     # only reads as "point" with the index straight, i.e. at near-zero volume,
@@ -246,15 +270,17 @@ def apply(frame: SensorFrame, synth: GloveSynth) -> None:
     synth.target_vibrato = frame.flex2 if frame.flex2 is not None else 0.0
 
 
-def handle_event(event: str, synth: GloveSynth) -> None:
+def handle_event(event: str, synth: GloveSynth,
+                 state: HandState | None = None) -> None:
     """Discrete gestures / button presses (drained from the event queue)."""
+    st = state or _default
     if event == "punch":
         if synth.slices_on:
             synth.trigger_slice()
         else:
             synth.pluck()
     elif event == "scene":
-        next_scene(synth)
+        next_scene(synth, st)
     elif event == "record":
         synth.toggle_record()
     elif event == "overdub":

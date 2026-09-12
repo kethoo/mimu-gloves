@@ -176,6 +176,62 @@ is why that one needs the longer dwell. Bending the index past the posture
 threshold always re-opens the gate, so a stray deactivate can never strand you
 in silence.
 
+## The voice hand (second glove)
+
+A second ESP32 with the same pinout — BNO08x, two flex sensors, button, LED,
+mic — processes the **microphone** while the first hand plays the instrument.
+The two gloves drive disjoint parameter sets, which is the MiMu model: not two
+hands averaged into one voice, but two independent controllers over one synth.
+
+| Voice-hand action | Voice effect |
+| --- | --- |
+| ↕️ Tilt up/down | Voice pitch, ±12 semitones, continuous |
+| ↪️ Rotate wrist | Reverb amount |
+| 👈 Point left/right | Voice stereo pan |
+| 🤏 Index bend | Voice volume |
+| ✊ Fist | Voice effects ON |
+| 🖐️ Open hand | Normal voice — fully dry |
+| 🤚 Point (index straight, middle bent) | Toggle delay |
+| 💥 Wrist flick | Stutter: freeze the last 150 ms and repeat it |
+| 👆 Button, short press | Next voice preset |
+| 👆 Button, hold | Record a take on that glove's mic |
+
+```bash
+python main.py --ble --voice-glove --web    # both hands
+python main.py --scan                        # shows which gloves are advertising
+```
+
+**Flash the boards with different hands.** `HAND_SUFFIX` in `glove_ble.ino` is
+`"-I"` (instrument) or `"-V"` (voice), so they advertise as `MIMU-GLOVE-I` and
+`MIMU-GLOVE-V`. Two boards on the same sketch would advertise identically and
+the laptop would connect to whichever it saw first — nondeterministically, run
+to run, with no error. Name matching is by prefix, so a board still on the old
+un-suffixed firmware keeps working as the instrument hand.
+
+**Live processing uses the laptop microphone, not the glove's.** BLE cannot
+carry live audio — ~32 kB/s of PCM against a link that manages a fraction of
+that, plus buffering latency. The glove's own mic works the way the instrument
+hand's does: record a take on the glove, transfer it afterwards. Wear
+headphones; the processed output re-entering the mic is a feedback loop.
+
+The voice chain is `gate → pitch shift → stutter → delay → reverb → level →
+pan`, entirely separate from the instrument's ladder filter and pan. The
+reverb is Schroeder: four parallel combs into two series allpasses, T60 ≈
+1.45 s. Every delay in it is longer than one audio block on purpose — that is
+what keeps it vectorized, since a delay shorter than a block would need its
+own output from within the same block and force a per-sample loop. Both hands
+live, with reverb and delay running, measured 9.6% of the audio budget.
+
+**Presets** (button tap) set reverb, delay and a pitch offset together: `Dry`,
+`Hall`, `Slap`, `Cavern`, `Chipmunk`, `Demon`. The offset is *added* to what
+tilt is asking for, so a preset colours the hand rather than overriding it.
+Edit `PRESETS` in `voice_mapping.py`.
+
+**Trying it without a second board.** Press `h` to switch which hand the keys
+drive, or click the hand buttons in the browser UI. Both hands exist in
+software whatever hardware is attached, so the whole two-hand mapping is
+playable and testable today.
+
 ## Recording on the glove (button + INMP441)
 
 Hold the glove's button, speak into the microphone on your hand, release.

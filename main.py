@@ -8,7 +8,19 @@ Usage:
 With the hardware glove:
     python main.py --ble --web glove plays; browser picks instruments/modes
     python main.py --ble       glove only
+    python main.py --ble --voice-glove   both hands: instrument + voice
     python main.py --scan      list BLE devices; check the glove is advertising
+
+The voice glove defaults to its own microphone: hold its button to record a
+phrase, then shape it with gestures. BLE cannot carry live audio, so that
+take arrives as a recording; --voice-mic laptop uses the laptop mic live
+instead.
+
+Audio devices are bound when the stream opens, so connecting headphones after
+startup will not move the sound. Either start the app afterwards, or pick
+explicitly:
+    python main.py --list-devices
+    python main.py --audio-out AirPods --audio-in "MacBook Air Microphone"
 
 Add --midi to any of the above to also stream notes and CCs to a DAW (see
 midi_out.py). The built-in synth keeps playing; --midi is an extra output,
@@ -23,6 +35,7 @@ import time
 import webbrowser
 
 import mapping
+import voice_mapping
 from sensors import DemoGloveSource, SimulatedGloveSource
 from synth import GloveSynth
 
@@ -38,6 +51,55 @@ def _flag_value(flag: str) -> str | None:
     return None
 
 
+def list_audio_devices() -> None:
+    """Print every audio device PortAudio can see, with its index."""
+    import sounddevice as sd
+
+    for i, d in enumerate(sd.query_devices()):
+        io = []
+        if d["max_input_channels"]:
+            io.append(f"in:{d['max_input_channels']}")
+        if d["max_output_channels"]:
+            io.append(f"out:{d['max_output_channels']}")
+        print(f"  [{i}] {d['name'][:44]:44s} {','.join(io):12s} "
+              f"{d['default_samplerate']:.0f} Hz")
+    di, do = sd.default.device
+    print(f"\ndefault in = [{di}]   default out = [{do}]")
+    print("\nPick with:  python main.py --audio-out AirPods --audio-in MacBook")
+
+
+def _resolve_device(spec: str | None, want_output: bool):
+    """Turn an index or a name fragment into a PortAudio device index."""
+    if spec is None:
+        return None
+    import sounddevice as sd
+
+    if spec.isdigit():
+        return int(spec)
+    key = "max_output_channels" if want_output else "max_input_channels"
+    devices = sd.query_devices()
+    matches = [i for i, d in enumerate(devices)
+               if spec.lower() in d["name"].lower() and d[key] > 0]
+    role = "output" if want_output else "input"
+    if not matches:
+        raise SystemExit(
+            f"No audio {role} matching {spec!r}. "
+            "Run: python main.py --list-devices"
+        )
+    if len(matches) > 1:
+        # Two pairs of AirPods match "AirPods". Silently taking the first
+        # would send the sound to whichever happened to enumerate first,
+        # which is exactly the confusion this flag exists to remove.
+        listing = "\n".join(
+            f"    [{i}] {devices[i]['name']}" for i in matches
+        )
+        raise SystemExit(
+            f"{spec!r} matches {len(matches)} audio {role}s:\n{listing}\n"
+            "  Be more specific, or pass the index."
+        )
+    return matches[0]
+
+
 def scan() -> None:
     """List nearby BLE devices. The glove never appears in macOS Bluetooth
     settings — BLE peripherals don't pair with the OS — so this is how you
@@ -48,17 +110,25 @@ def scan() -> None:
 
     async def run() -> None:
         found = await BleakScanner.discover(timeout=8, return_adv=True)
-        glove = None
+        gloves = {}
         for addr, (dev, adv) in sorted(found.items(), key=lambda kv: -kv[1][1].rssi):
             name = adv.local_name or dev.name or "(unnamed)"
-            if name == "MIMU-GLOVE":
-                glove = (addr, adv.rssi)
+            if name.startswith("MIMU-GLOVE"):
+                gloves[name] = (addr, adv.rssi)
             print(f"  {name:<22} {addr}  rssi {adv.rssi}")
         print()
-        if glove:
-            print(f"GLOVE FOUND at {glove[0]} (signal {glove[1]} dBm) — run: python main.py --ble")
+        if not gloves:
+            print("GLOVE NOT FOUND — is the ESP32 powered? It advertises as "
+                  "'MIMU-GLOVE', 'MIMU-GLOVE-I' or 'MIMU-GLOVE-V'.")
+            return
+        for name, (addr, rssi) in sorted(gloves.items()):
+            hand = {"MIMU-GLOVE-I": "instrument hand",
+                    "MIMU-GLOVE-V": "voice hand"}.get(name, "single-hand firmware")
+            print(f"FOUND {name} at {addr} ({rssi} dBm) — {hand}")
+        if "MIMU-GLOVE-V" in gloves:
+            print("\nBoth hands: python main.py --ble --voice-glove --web")
         else:
-            print("GLOVE NOT FOUND — is the ESP32 powered? It advertises as 'MIMU-GLOVE'.")
+            print("\nRun: python main.py --ble")
 
     print("Scanning for BLE devices (8s)...\n")
     asyncio.run(run())
@@ -68,11 +138,25 @@ def main() -> None:
     if "--scan" in sys.argv:
         scan()
         return
+    if "--list-devices" in sys.argv:
+        list_audio_devices()
+        return
+    voice_source = None
     if "--ble" in sys.argv:
-        from ble_receiver import BleGloveSource
+        from ble_receiver import BleGloveSource, run_gloves
 
-        glove = BleGloveSource()
-        print("Connecting to ESP32 glove over BLE...")
+        two = "--voice-glove" in sys.argv
+        if two:
+            glove = BleGloveSource(
+                "MIMU-GLOVE-I", label="instrument glove", managed=True
+            )
+            voice_source = BleGloveSource(
+                "MIMU-GLOVE-V", tag="V:", label="voice glove", managed=True
+            )
+            print("Connecting to BOTH gloves over BLE...")
+        else:
+            glove = BleGloveSource()
+            print("Connecting to ESP32 glove over BLE...")
         if "--web" in sys.argv:
             # Glove drives the hand; the browser supplies the buttons the
             # hardware doesn't have yet (instruments, record, modes).
@@ -120,16 +204,68 @@ def main() -> None:
 
         midi = MidiOut(_flag_value("--midi-port"))
 
-    synth = GloveSynth()
-    mapping.apply_scene(synth)  # scene 1 sets instrument, scale and modes
+    synth = GloveSynth(
+        input_device=_resolve_device(_flag_value("--audio-in"), want_output=False),
+        output_device=_resolve_device(_flag_value("--audio-out"), want_output=True),
+    )
+    print(f"[audio  {synth.describe_devices()}]")
+    hand = mapping.HandState()
+    voice = voice_mapping.VoiceState()
+    mapping.apply_scene(synth, hand)  # scene 1 sets instrument, scale and modes
+    two_hands = voice_source is not None or hasattr(source, "_target_voice")
+    if two_hands:
+        # Tells mapping.py to stop writing the legacy live-voice targets: the
+        # voice hand owns them now, and two writers at 100 Hz would fight.
+        synth.voice_hand = True
+        voice_mapping.apply_preset(synth, voice)
+        if voice_source is not None:
+            # Default to the glove's own microphone: hold its button to
+            # record a phrase, and the voice hand shapes the result. Pass
+            # --voice-mic laptop for the live (lower latency) path instead.
+            if _flag_value("--voice-mic") == "laptop":
+                synth.live_on = True
+                print("Voice glove shapes the LAPTOP mic (live) "
+                      "— wear headphones.")
+            else:
+                synth.voice_from_loop = True
+                print("Voice glove shapes takes from ITS OWN mic — hold the "
+                      "glove's button to record a phrase, then play it with "
+                      "gestures. ('p' on the voice hand switches to the "
+                      "laptop mic.)")
+        else:
+            print("Second hand available: press 'h' to switch the keys/UI "
+                  "between the instrument and voice hands. 'l' starts the mic.")
+
+    if voice_source is not None:
+        # One thread, one event loop for both gloves. Starting each source
+        # separately would give bleak two concurrent loops and two scanners,
+        # which is unreliable on CoreBluetooth. Both are `managed`, so their
+        # own start() is a no-op and this owns them.
+        from ble_receiver import run_gloves
+
+        run_gloves([glove, voice_source])
     source.start()
     synth.start()
     try:
         while not getattr(source, "quit_requested", False):
             frame = source.latest
-            mapping.apply(frame, synth)
-            for event in source.drain_events():
-                mapping.handle_event(event, synth)
+            mapping.apply(frame, synth, hand)
+            # The voice hand comes either from a second glove or, with no
+            # second board yet, from the same keyboard/browser source driving
+            # its own set of targets.
+            vframe = (voice_source.latest if voice_source is not None
+                      else getattr(source, "latest_voice", None))
+            if vframe is not None:
+                voice_mapping.apply(vframe, synth, voice)
+            events = list(source.drain_events())
+            if voice_source is not None:
+                events += voice_source.drain_events()
+            for event in events:
+                # "V:" marks the voice hand; anything else is the instrument.
+                if event.startswith("V:"):
+                    voice_mapping.handle_event(event[2:], synth, voice)
+                    continue
+                mapping.handle_event(event, synth, hand)
                 if midi is not None:
                     midi.handle_event(event)
             if midi is not None:
@@ -137,6 +273,8 @@ def main() -> None:
                 # the same gesture the local synth does.
                 midi.update(synth)
             take = source.take_audio()
+            if take is None and voice_source is not None:
+                take = voice_source.take_audio()
             if take is not None:
                 synth.set_loop(*take)
             publish = getattr(source, "publish", None)
@@ -179,19 +317,31 @@ def main() -> None:
                     extra = (f"  {_raw(frame.flex_raw, s1)}"
                              f" {_raw(frame.flex2_raw, s2)}")
 
-                print(
-                    f"\rroll {frame.roll:+6.1f}  pitch {frame.pitch:+6.1f}  "
-                    f"yaw {frame.yaw:+6.1f}  motion {frame.motion:4.2f}  "
-                    f"flex1 {_f(frame.flex)} (volume)  "
-                    f"flex2 {_f(frame.flex2)} (vibrato){extra}   ",
-                    end="",
-                    flush=True,
-                )
+                if two_hands and vframe is not None:
+                    # Both hands, compactly. Showing only hand 1 made a voice
+                    # hand that was moving perfectly look completely frozen.
+                    line = (
+                        f"\rI roll {frame.roll:+6.1f} tilt {frame.pitch:+6.1f} "
+                        f"yaw {frame.yaw:+6.1f} flex {_f(frame.flex)}/{_f(frame.flex2)}"
+                        f"   V roll {vframe.roll:+6.1f} tilt {vframe.pitch:+6.1f} "
+                        f"yaw {vframe.yaw:+6.1f} flex {_f(vframe.flex)}/{_f(vframe.flex2)}"
+                        f"{extra}   "
+                    )
+                else:
+                    line = (
+                        f"\rroll {frame.roll:+6.1f}  pitch {frame.pitch:+6.1f}  "
+                        f"yaw {frame.yaw:+6.1f}  motion {frame.motion:4.2f}  "
+                        f"flex1 {_f(frame.flex)} (volume)  "
+                        f"flex2 {_f(frame.flex2)} (vibrato){extra}   "
+                    )
+                print(line, end="", flush=True)
             time.sleep(1.0 / CONTROL_RATE)
     except KeyboardInterrupt:
         pass
     finally:
         source.stop()
+        if voice_source is not None:
+            voice_source.stop()
         synth.stop()
         if midi is not None:
             midi.close()

@@ -83,6 +83,13 @@
 <main>
   <div class="panel">
     <div class="label">Hand — drag the pad</div>
+    <div class="btnrow" style="grid-template-columns:1fr 1fr; margin-bottom:10px">
+      <button id="hand-i" class="on">🎹 Instrument hand</button>
+      <button id="hand-v">🎤 Voice hand</button>
+    </div>
+    <div class="hint" id="handhint" style="margin-bottom:8px">
+      Roll = brightness, tilt = pitch, yaw = pan, index = volume.
+    </div>
     <div id="pad">
       <div id="dot" style="left:50%;top:50%"></div>
       <span class="axis" style="left:6px;top:50%">dark ↩</span>
@@ -138,7 +145,8 @@
         <kbd>space</kbd> wrist flick, <kbd>n</kbd> next scene,
         <kbd>v</kbd> record, <kbd>o</kbd> overdub, <kbd>p</kbd> loop,
         <kbd>g</kbd> granular, <kbd>b</kbd> slices, <kbd>m</kbd> drone,
-        <kbd>l</kbd> live voice, <kbd>1</kbd>–<kbd>7</kbd> instruments.
+        <kbd>l</kbd> live voice, <kbd>1</kbd>–<kbd>7</kbd> instruments,
+        <kbd>h</kbd> switch hand.
         Live voice: wear headphones, speak, roll = pitch, motion = echo.
       </div>
     </div>
@@ -172,8 +180,27 @@ function connect() {
 }
 connect();
 
-function send(obj) { if (connected) ws.send(JSON.stringify(obj)); }
+// Which hand the pad, sliders and keys are driving. The voice glove is a
+// separate set of targets on the Python side, so everything the page sends
+// carries the hand with it.
+let HAND = 1;
+function send(obj) { if (connected) ws.send(JSON.stringify({ ...obj, hand: HAND })); }
 function sendEvent(name) { send({ type: "event", name }); }
+
+const HINTS = {
+  1: "Roll = brightness, tilt = pitch, yaw = pan, index = volume.",
+  2: "Roll = reverb, tilt = voice pitch, yaw = voice pan, index = voice volume. " +
+     "Fist = FX on, open = dry, point = delay, PUNCH = stutter.",
+};
+function setHand(h) {
+  HAND = h;
+  document.getElementById("hand-i").classList.toggle("on", h === 1);
+  document.getElementById("hand-v").classList.toggle("on", h === 2);
+  document.getElementById("handhint").textContent = HINTS[h];
+  // Each hand keeps its own pose on the Python side; re-send ours so the
+  // newly selected hand picks up where the controls currently sit.
+  poseDirty = true;
+}
 
 // ---- hand pose ----------------------------------------------------------
 const pose = { roll: 0, pitch: 0, yaw: 0, flex: 0, flex2: 0 };
@@ -210,6 +237,8 @@ yawSlider.addEventListener("input", () => setPose(null, null, +yawSlider.value))
 const flexSlider = document.getElementById("flex"), flex2Slider = document.getElementById("flex2");
 flexSlider.addEventListener("input", () => setFlex("flex", +flexSlider.value));
 flex2Slider.addEventListener("input", () => setFlex("flex2", +flex2Slider.value));
+document.getElementById("hand-i").onclick = () => setHand(1);
+document.getElementById("hand-v").onclick = () => setHand(2);
 document.getElementById("reset").onclick = () => {
   setPose(0, 0, 0);
   flexSlider.value = flex2Slider.value = 0;
@@ -228,6 +257,7 @@ document.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (KEYS[k]) { sendEvent(KEYS[k]); e.preventDefault(); }
   else if (k >= "1" && k <= "7") sendEvent("instrument:" + INS[+k - 1]);
+  else if (k === "h") setHand(HAND === 1 ? 2 : 1);
   else if (k === "r") setPose(0, 0, 0);
 });
 

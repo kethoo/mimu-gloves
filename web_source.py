@@ -35,6 +35,7 @@ class WebGloveSource(GloveSource):
         super().__init__()
         self.port = port
         self._target = SensorFrame()
+        self._target_voice = SensorFrame()
         self.state: dict = {}
         self.quit_requested = False
 
@@ -67,7 +68,10 @@ class WebGloveSource(GloveSource):
                         continue
                     kind = msg.get("type")
                     if kind == "pose":
-                        t = self._target
+                        # hand 2 is the voice glove; the page sends which one
+                        # it is driving so both can be played from one UI.
+                        t = (self._target_voice if msg.get("hand") == 2
+                             else self._target)
                         t.roll = _clamp(msg.get("roll", t.roll), -90, 90)
                         t.pitch = _clamp(msg.get("pitch", t.pitch), -90, 90)
                         t.yaw = _clamp(msg.get("yaw", t.yaw), -90, 90)
@@ -81,7 +85,8 @@ class WebGloveSource(GloveSource):
                     elif kind == "event":
                         name = msg.get("name", "")
                         if name in ALLOWED_EVENTS or name.startswith("instrument:"):
-                            self.events.append(name)
+                            tag = "V:" if msg.get("hand") == 2 else ""
+                            self.events.append(tag + name)
             finally:
                 sender.cancel()
 

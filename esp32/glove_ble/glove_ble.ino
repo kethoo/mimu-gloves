@@ -31,7 +31,28 @@
 #include <Wire.h>
 #include <math.h>
 
-#define DEVICE_NAME  "MIMU-GLOVE"
+// Which hand this board is. Flash one board with "-I" and the other with
+// "-V"; the laptop tells them apart by advertised name, since two boards
+// running the same sketch would otherwise advertise identically and the host
+// would connect to whichever it happened to see first — nondeterministically,
+// run to run. The service/characteristic UUIDs stay the same for both:
+// devices are addressed by device, not by UUID.
+//
+//   "-I"  instrument hand (pitch, brightness, pan, scenes)
+//   "-V"  voice hand      (voice pitch, reverb, delay, stutter)
+//
+// The laptop also matches by prefix, so a board still on the old un-suffixed
+// "MIMU-GLOVE" firmware keeps working as the instrument hand.
+// Defaults to the instrument hand. Flash the voice board by adding
+//   --build-property "compiler.cpp.extra_flags=-DHAND_VOICE"
+// to the arduino-cli command — no editing this file, so there is no way to
+// leave the wrong identity committed or to flash two boards the same.
+#ifdef HAND_VOICE
+  #define HAND_SUFFIX "-V"
+#else
+  #define HAND_SUFFIX "-I"
+#endif
+#define DEVICE_NAME  "MIMU-GLOVE" HAND_SUFFIX
 #define SERVICE_UUID "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 #define CHAR_UUID    "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 #define AUDIO_UUID   "6e400004-b5a3-f393-e0a9-e50e24dcca9e"
@@ -57,6 +78,11 @@
 #define I2S_SD      32
 #define AUDIO_RATE  16000
 #define MAX_SECONDS 8
+// Internal RAM to leave untouched for the BLE stack, I2S DMA and the rest of
+// the sketch when there is no PSRAM to put the audio buffer in. Sized with
+// headroom: running the heap dry shows up as a BLE disconnect mid-recording,
+// which is far harder to diagnose than a shorter take.
+#define HEAP_RESERVE 90000
 #define MAX_SAMPLES (AUDIO_RATE * MAX_SECONDS)
 #define AUDIO_CHUNK 180   // bytes per BLE notification during a transfer
 // 50 Hz is plenty for gesture control and leaves the I2C bus ~8x headroom;
@@ -257,9 +283,21 @@ void setup() {
     maxSamples = MAX_SAMPLES;
     Serial.printf("Audio buffer: %d s in PSRAM.\n", MAX_SECONDS);
   } else {
-    maxSamples = AUDIO_RATE * 2;
-    audioBuf = (int16_t *)malloc(AUDIO_RATE * 2 * sizeof(int16_t));
-    Serial.println("No PSRAM - falling back to a 2 s buffer in internal RAM.");
+    // No PSRAM. Size the buffer to what internal RAM can actually spare
+    // rather than assuming: free heap after the BLE stack comes up varies by
+    // core version and build options, and a hardcoded 2 s was leaving room
+    // unused on some boards and would overrun on others.
+    size_t freeHeap = ESP.getFreeHeap();
+    size_t budget = freeHeap > HEAP_RESERVE ? freeHeap - HEAP_RESERVE : 0;
+    size_t want = (size_t)AUDIO_RATE * MAX_SECONDS * sizeof(int16_t);
+    size_t take = budget < want ? budget : want;
+    maxSamples = take / sizeof(int16_t);
+    audioBuf = maxSamples ? (int16_t *)malloc(maxSamples * sizeof(int16_t)) : nullptr;
+    if (!audioBuf) maxSamples = 0;
+    Serial.printf(
+        "No PSRAM - free heap %u B, reserving %u B for BLE -> %.1f s buffer.\n",
+        (unsigned)freeHeap, (unsigned)HEAP_RESERVE,
+        (float)maxSamples / AUDIO_RATE);
   }
 
   i2s.setPins(I2S_SCK, I2S_WS, -1, I2S_SD);
@@ -287,7 +325,11 @@ void setup() {
   audioChar->addDescriptor(new BLE2902());
   service->start();
   server->getAdvertising()->start();
-  Serial.println("Advertising as MIMU-GLOVE");
+  // Print the real macro, never a copy of it: a hardcoded literal here
+  // said "MIMU-GLOVE" on a board that was correctly advertising as
+  // "MIMU-GLOVE-V", which is a genuinely confusing thing to debug.
+  Serial.print("Advertising as ");
+  Serial.println(DEVICE_NAME);
 }
 
 void readSensor() {

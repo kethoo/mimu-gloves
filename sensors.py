@@ -59,6 +59,9 @@ class GloveSource:
 
     def __init__(self) -> None:
         self.latest = SensorFrame()
+        # Second hand, for sources that provide one. Sources that do not
+        # simply leave it at neutral and nothing reads it.
+        self.latest_voice = SensorFrame()
         self.events: deque[str] = deque()
         # A recording captured on the glove itself, as (samples, rate), waiting
         # to be collected. Same idea as the event queue: produced here, taken
@@ -79,33 +82,48 @@ class GloveSource:
         audio, self.audio = self.audio, None
         return audio
 
+    @staticmethod
+    def _step(prev: SensorFrame, tgt: SensorFrame, k: float, dt: float) -> SensorFrame:
+        f = SensorFrame(
+            roll=prev.roll + (tgt.roll - prev.roll) * k,
+            pitch=prev.pitch + (tgt.pitch - prev.pitch) * k,
+            yaw=prev.yaw + (tgt.yaw - prev.yaw) * k,
+            # Finger bend passes straight through: it is set directly rather
+            # than nudged, and the postures built on it need the value the
+            # player actually asked for.
+            flex=tgt.flex,
+            flex2=tgt.flex2,
+        )
+        speed = (
+            abs(f.roll - prev.roll)
+            + abs(f.pitch - prev.pitch)
+            + abs(f.yaw - prev.yaw)
+        ) / dt
+        f.motion = min(speed / 400.0, 1.5)
+        return f
+
     def _smooth_toward_target(self, rate: int) -> None:
         """Chase self._target with a first-order lag (real hands don't
         teleport) and derive motion intensity from how fast we're moving.
-        Shared by the keyboard and web simulators."""
+        Shared by the keyboard and web simulators.
+
+        If the source also defines `_target_voice`, a second hand is smoothed
+        into `latest_voice` — which is how the voice glove can be played, and
+        the two-hand mapping tested, before a second board exists.
+        """
         dt = 1.0 / rate
         prev = self.latest
+        prev_v = self.latest_voice
         while self._running:
-            tgt = self._target
             k = 1.0 - math.exp(-dt / 0.08)
-            f = SensorFrame(
-                roll=prev.roll + (tgt.roll - prev.roll) * k,
-                pitch=prev.pitch + (tgt.pitch - prev.pitch) * k,
-                yaw=prev.yaw + (tgt.yaw - prev.yaw) * k,
-                # Finger bend passes straight through: it is set directly
-                # rather than nudged, and the postures built on it need the
-                # value the player actually asked for.
-                flex=tgt.flex,
-                flex2=tgt.flex2,
-            )
-            speed = (
-                abs(f.roll - prev.roll)
-                + abs(f.pitch - prev.pitch)
-                + abs(f.yaw - prev.yaw)
-            ) / dt
-            f.motion = min(speed / 400.0, 1.5)
+            f = self._step(prev, self._target, k, dt)
             self.latest = f
             prev = f
+            tv = getattr(self, "_target_voice", None)
+            if tv is not None:
+                fv = self._step(prev_v, tv, k, dt)
+                self.latest_voice = fv
+                prev_v = fv
             time.sleep(dt)
 
     def start(self) -> None:
@@ -177,7 +195,7 @@ class SimulatedGloveSource(GloveSource):
     o   = overdub a layer      p = play/pause loop
     g   = granular mode        b = slice mode on/off
     m   = mute/unmute drone    r = reset to neutral
-    x   = quit
+    h   = switch hand (instrument <-> voice)    x = quit
 
     Bend both fingers for a fist (sound on), straighten both for an open
     hand (sound off), index straight + middle bent to change instrument.
@@ -190,6 +208,8 @@ class SimulatedGloveSource(GloveSource):
     def __init__(self) -> None:
         super().__init__()
         self._target = SensorFrame()
+        self._target_voice = SensorFrame()
+        self._active = 0          # 0 = instrument hand, 1 = voice hand
         self.quit_requested = False
 
     def _run(self) -> None:
@@ -205,7 +225,17 @@ class SimulatedGloveSource(GloveSource):
                 if not select.select([sys.stdin], [], [], 0.05)[0]:
                     continue
                 c = sys.stdin.read(1).lower()
-                t = self._target
+                if c == "h":
+                    # One keyboard, two hands: switch which one the keys move.
+                    # Lets the whole two-glove mapping be played and tested
+                    # before a second board exists.
+                    self._active = 1 - self._active
+                    print("\n[keys now drive the "
+                          + ("VOICE" if self._active else "INSTRUMENT")
+                          + " hand]")
+                    continue
+                t = self._target_voice if self._active else self._target
+                tag = "V:" if self._active else ""
                 step = 15.0
                 if c == "a":
                     t.roll = max(t.roll - step, -90)
@@ -220,23 +250,23 @@ class SimulatedGloveSource(GloveSource):
                 elif c == "e":
                     t.yaw = min(t.yaw + step, 90)
                 elif c == " ":
-                    self.events.append("punch")
+                    self.events.append(tag + "punch")
                 elif c == "v":
-                    self.events.append("record")
+                    self.events.append(tag + "record")
                 elif c == "o":
-                    self.events.append("overdub")
+                    self.events.append(tag + "overdub")
                 elif c == "p":
-                    self.events.append("loop")
+                    self.events.append(tag + "loop")
                 elif c == "g":
-                    self.events.append("granular")
+                    self.events.append(tag + "granular")
                 elif c == "b":
-                    self.events.append("slices")
+                    self.events.append(tag + "slices")
                 elif c == "m":
-                    self.events.append("mute")
+                    self.events.append(tag + "mute")
                 elif c == "l":
-                    self.events.append("live")
+                    self.events.append(tag + "live")
                 elif c == "n":
-                    self.events.append("scene")
+                    self.events.append(tag + "scene")
                 elif c in "[]":
                     # index finger bend: volume, and half of every posture
                     t.flex = min(max((t.flex or 0.0) + (0.2 if c == "]" else -0.2), 0.0), 1.0)
@@ -245,9 +275,10 @@ class SimulatedGloveSource(GloveSource):
                 elif c in "1234567":
                     names = ["saw", "organ", "strings", "bell", "flute",
                              "pluck", "guitar"]
-                    self.events.append("instrument:" + names[int(c) - 1])
+                    self.events.append(tag + "instrument:" + names[int(c) - 1])
                 elif c == "r":
                     t.roll = t.pitch = t.yaw = 0.0
+                    t.flex = t.flex2 = None
                 elif c == "x":
                     self.quit_requested = True
         finally:

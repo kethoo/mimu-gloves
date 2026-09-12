@@ -23,8 +23,44 @@ VIBRATO_DEPTH = 0.02                  # max pitch swing (+/-2%, ~a third of
 
 PS_BUF = 1 << 16                     # live voice: ring buffer (~1.5 s)
 PS_WIN = 2048                        # pitch-shifter tap window (~46 ms)
-ECHO_DELAY = int(0.30 * SAMPLE_RATE) # live voice echo time
-ECHO_LEN = ECHO_DELAY + BLOCK
+
+# ---- voice hand (second glove) ----------------------------------------
+# Schroeder reverb: four parallel combs summed into two series allpasses.
+# Every delay here is longer than BLOCK on purpose — that is what lets the
+# whole reverb stay vectorized. A delay shorter than one block would need the
+# previous output *within* the same block and force a per-sample loop, which
+# is why the two short Freeverb allpasses (341, 225) are not used.
+REVERB_COMBS = (1116, 1188, 1277, 1356)
+REVERB_APS = (556, 441)
+REVERB_FB = 0.90          # comb feedback. Measured T60 ~1.45 s, a hall
+                          # rather than a room; roll dials the wet amount.
+REVERB_AP_G = 0.5         # allpass coefficient: diffusion
+
+VOICE_DELAY = int(0.28 * SAMPLE_RATE)   # "point" delay time. Its feedback is
+                                        # target_echo, i.e. hand motion — wave
+                                        # and the repeats ring on longer.
+STUTTER_LEN = int(0.15 * SAMPLE_RATE)   # wrist flick grabs this much
+STUTTER_HOLD = int(0.70 * SAMPLE_RATE)  # ...and repeats it for this long
+
+
+def _ring_read(buf: np.ndarray, i: int, frames: int) -> np.ndarray:
+    """Read `frames` samples from a circular buffer, handling one wrap."""
+    n = len(buf)
+    if i + frames <= n:
+        return buf[i:i + frames]
+    k = n - i
+    return np.concatenate((buf[i:], buf[:frames - k]))
+
+
+def _ring_write(buf: np.ndarray, i: int, data: np.ndarray) -> None:
+    n = len(buf)
+    frames = len(data)
+    if i + frames <= n:
+        buf[i:i + frames] = data
+    else:
+        k = n - i
+        buf[i:] = data[:k]
+        buf[:frames - k] = data[k:]
 
 FILTER_RES = 1.1     # ladder feedback; higher = more resonant peak at cutoff
 
@@ -102,7 +138,16 @@ def _poly_saw(p: np.ndarray, dt: float) -> np.ndarray:
 
 
 class GloveSynth:
-    def __init__(self) -> None:
+    def __init__(self, input_device=None, output_device=None) -> None:
+        # PortAudio binds a stream to whatever device was default when the
+        # stream was *created*. Switching the system default afterwards (say,
+        # connecting AirPods mid-session) does not move an already-open
+        # stream, which is why audio can keep coming out of the laptop.
+        # Passing devices explicitly also lets output and input be different
+        # hardware — AirPods out, laptop mic in — which matters because using
+        # AirPods as an input forces them into a 24 kHz hands-free mode that
+        # noticeably degrades what you hear.
+        self._devices = (input_device, output_device)
         # Targets, written by the control thread at ~100 Hz.
         self.target_freq = 220.0     # Hz
         self.target_cutoff = 1000.0  # Hz, lowpass brightness
@@ -181,9 +226,50 @@ class GloveSynth:
         self._ps_phase = 0.0         # tap-window phase, 0..1
         self._pshift = 1.0           # smoothed pitch ratio
         self._gate = 0.0             # noise-gate envelope follower
-        self._echo_buf = np.zeros(ECHO_LEN)
-        self._echo_w = 0
-        self._echo_fb = 0.0
+        self._echo_fb = 0.2   # smoothed delay feedback, driven by motion
+
+        # ---- voice hand (second glove) --------------------------------
+        # Disjoint from the instrument targets on purpose: two gloves control
+        # two parameter sets, so the voice never passes through the
+        # instrument's ladder filter or pan.
+        self.voice_hand = False       # True once a voice glove is driving us
+        # Where the voice chain gets its audio. BLE cannot carry live audio
+        # (16 kHz mono needs 32 kB/s against a link measured at 30 kB/s with
+        # the sensor stream already switched off, and the latency would be
+        # 100 ms+), so the glove's own mic reaches us as recorded takes. With
+        # this set, those takes feed the voice effects instead of the
+        # instrument bus — the source is the board's microphone, the control
+        # is the voice hand, they just are not simultaneous.
+        self.voice_from_loop = False
+        self.voice_fx_on = True       # fist on / open hand = dry
+        self.voice_delay_on = False   # "point" toggles it
+        self.target_voice_pitch = 1.0     # 0.5 (octave down) .. 2.0 (up)
+        self.target_voice_reverb = 0.25   # 0..1 wet
+        self.target_voice_pan = 0.0       # -1..+1
+        self.target_voice_volume = 0.6    # 0..1
+        self._v_pitch = 1.0
+        self._v_reverb = 0.25
+        self._v_pan = 0.0
+        self._v_vol = 0.6
+
+        # Reverb: parallel combs -> series allpasses.
+        self._rv_comb = [np.zeros(d) for d in REVERB_COMBS]
+        self._rv_comb_i = [0] * len(REVERB_COMBS)
+        self._rv_comb_prev = [0.0] * len(REVERB_COMBS)
+        self._rv_ap = [np.zeros(d) for d in REVERB_APS]
+        self._rv_ap_i = [0] * len(REVERB_APS)
+
+        # "Point" delay, separate from the legacy live-mode echo.
+        self._vd_buf = np.zeros(VOICE_DELAY + BLOCK)
+        self._vd_w = 0
+
+        # Wrist-flick stutter: a rolling history to grab from, the grabbed
+        # slice itself, and how much longer to keep repeating it.
+        self._st_hist = np.zeros(STUTTER_LEN)
+        self._st_hw = 0
+        self._st_buf = np.zeros(STUTTER_LEN)
+        self._st_left = 0
+        self._st_pos = 0
 
         # Duplex stream (mic in + speakers out in one callback) so live
         # mode works; fall back to output-only if there's no input device.
@@ -193,6 +279,7 @@ class GloveSynth:
                 blocksize=BLOCK,
                 channels=(1, 2),
                 dtype="float32",
+                device=self._devices,
                 callback=self._duplex_callback,
             )
             self._has_input = True
@@ -203,9 +290,26 @@ class GloveSynth:
                 blocksize=BLOCK,
                 channels=2,
                 dtype="float32",
+                device=output_device,
                 callback=self._callback,
             )
             self._has_input = False
+
+    def describe_devices(self) -> str:
+        """Which hardware the stream actually bound to. Printed at startup
+        because 'why is the sound coming out of the wrong thing' is otherwise
+        invisible."""
+        try:
+            dev = self._stream.device
+            names = []
+            for d, role in zip(
+                dev if isinstance(dev, (list, tuple)) else [dev],
+                ("in", "out") if self._has_input else ("out",),
+            ):
+                names.append(f"{role}: {sd.query_devices(d)['name']}")
+            return "  |  ".join(names)
+        except Exception:
+            return "unknown"
 
     def start(self) -> None:
         self._stream.start()
@@ -441,6 +545,7 @@ class GloveSynth:
             saw = np.zeros(frames)
 
         # Voice: mixed in before the filter so tilt brightens/darkens it too.
+        loop_block = None
         buf = self._loop_buf
         if buf is not None and len(buf) > 1:
             voice = None
@@ -462,15 +567,20 @@ class GloveSynth:
             if shot is not None:
                 voice = shot if voice is None else voice + shot
             if voice is not None:
-                # Solid base level so the voice is always clearly audible;
-                # motion still adds a swell on top.
-                saw = saw + voice * (0.6 + self._amp)
+                if self.voice_from_loop:
+                    # Hand it to the voice chain below instead of the
+                    # instrument bus, so it is not processed twice.
+                    loop_block = voice
+                else:
+                    # Solid base level so the voice is always clearly audible;
+                    # motion still adds a swell on top.
+                    saw = saw + voice * (0.6 + self._amp)
 
-        # Live voice: mic -> pitch shifter -> echo, mixed pre-filter so
-        # tilt (brightness) and yaw (pan) shape it like everything else.
-        live_in = self._live_in
-        if self.live_on and live_in is not None and len(live_in) == frames:
-            saw = saw + self._process_live(live_in, frames) * 0.9
+        # The live voice is deliberately NOT mixed in here any more. It runs
+        # its own chain below with its own level and pan, because the voice
+        # glove controls a parameter set disjoint from the instrument's —
+        # dragging it through the instrument's ladder filter would mean one
+        # hand's brightness gesture silently reshaped the other hand's voice.
 
         # Four-pole resonant lowpass (-24 dB/oct), the classic ladder shape.
         # A single pole managed only -4 dB one octave above cutoff, so almost
@@ -515,36 +625,140 @@ class GloveSynth:
         # Soft clip so stacked layers saturate gently instead of crackling.
         mono = np.tanh(mono)
 
-        # Equal-power stereo pan.
+        # Equal-power stereo pan for the instrument.
         angle = (self._pan + 1.0) * (np.pi / 4.0)
-        out[:, 0] = (mono * np.cos(angle)).astype(np.float32)
-        out[:, 1] = (mono * np.sin(angle)).astype(np.float32)
+        left = mono * np.cos(angle)
+        right = mono * np.sin(angle)
 
-    def _process_live(self, x: np.ndarray, frames: int) -> np.ndarray:
-        """Real-time voice manipulation: noise gate -> granular pitch
-        shifter -> feedback echo.
+        # Voice hand: its own chain, its own level, its own pan. Summed at the
+        # very end so nothing the instrument glove does can touch it.
+        live_in = self._live_in
+        v_in = loop_block
+        if self.live_on and live_in is not None and len(live_in) == frames:
+            v_in = live_in if v_in is None else v_in + live_in
+        if v_in is not None:
+            v = self._process_voice(v_in, frames)
+            v = np.tanh(v)   # its own soft clip; reverb tails can stack up
+            v_angle = (self._v_pan + 1.0) * (np.pi / 4.0)
+            left = left + v * np.cos(v_angle)
+            right = right + v * np.sin(v_angle)
 
-        The pitch shifter is the classic delay-line design: the input goes
-        into a ring buffer, and two read taps chase the write head at
-        `pitch ratio` speed, each faded by a half-offset sine window and
-        crossfaded so the periodic tap-wrap is inaudible. ~25 ms latency.
+        out[:, 0] = left.astype(np.float32)
+        out[:, 1] = right.astype(np.float32)
+
+    # ---- voice hand ---------------------------------------------------
+
+    def set_voice_fx(self, on: bool) -> None:
+        """Fist activates the effect chain, an open hand returns the dry
+        voice. Absolute rather than a toggle, because a held posture must
+        always mean the same thing."""
+        if on != self.voice_fx_on:
+            self.voice_fx_on = on
+            print("\n[voice FX ON]" if on else "\n[voice: dry]")
+
+    def toggle_voice_source(self) -> None:
+        """Switch the voice effects between the laptop mic and the glove's own
+        recorded takes."""
+        self.voice_from_loop = not self.voice_from_loop
+        print(
+            "\n[voice source: GLOVE mic (recorded takes) — hold the glove "
+            "button to record]"
+            if self.voice_from_loop
+            else "\n[voice source: laptop mic — press l for live]"
+        )
+
+    def toggle_voice_delay(self) -> None:
+        self.voice_delay_on = not self.voice_delay_on
+        print("\n[voice delay on]" if self.voice_delay_on else "\n[voice delay off]")
+
+    def trigger_stutter(self) -> None:
+        """Wrist flick: freeze the last STUTTER_LEN of voice and repeat it.
+
+        The grab is taken from a rolling history rather than from the moment
+        of the flick, so the captured audio is what you *just said* — waiting
+        to fill a buffer after the gesture would repeat the silence after it.
         """
+        h = self._st_hist
+        w = self._st_hw
+        # Unwrap the history so the grab reads oldest-to-newest.
+        self._st_buf = np.concatenate((h[w:], h[:w])).copy()
+        self._st_left = STUTTER_HOLD
+        self._st_pos = 0
+
+    def _comb(self, j: int, x: np.ndarray) -> np.ndarray:
+        buf = self._rv_comb[j]
+        i = self._rv_comb_i[j]
+        delayed = _ring_read(buf, i, len(x))
+        y = x + REVERB_FB * delayed
+        # One-sample average damps highs on every pass round the loop, the
+        # same trick the plucked string uses. Real rooms lose treble fastest;
+        # an undamped comb sounds like a metal tank.
+        damped = 0.5 * (y + np.concatenate(([self._rv_comb_prev[j]], y[:-1])))
+        self._rv_comb_prev[j] = float(y[-1])
+        _ring_write(buf, i, damped)
+        self._rv_comb_i[j] = (i + len(x)) % len(buf)
+        return y
+
+    def _allpass(self, j: int, x: np.ndarray) -> np.ndarray:
+        buf = self._rv_ap[j]
+        i = self._rv_ap_i[j]
+        delayed = _ring_read(buf, i, len(x))
+        y = delayed - x
+        _ring_write(buf, i, x + delayed * REVERB_AP_G)
+        self._rv_ap_i[j] = (i + len(x)) % len(buf)
+        return y
+
+    def _reverb(self, x: np.ndarray, frames: int) -> np.ndarray:
+        """Schroeder reverb, fully vectorized (see REVERB_COMBS)."""
+        wet = np.zeros(frames)
+        for j in range(len(REVERB_COMBS)):
+            wet += self._comb(j, x)
+        wet /= len(REVERB_COMBS)
+        for j in range(len(REVERB_APS)):
+            wet = self._allpass(j, wet)
+        return wet
+
+    def _voice_delay(self, x: np.ndarray, frames: int) -> np.ndarray:
+        buf = self._vd_buf
+        n = len(buf)
+        w = self._vd_w
+        k = np.arange(frames)
+        self._echo_fb += (self.target_echo - self._echo_fb) * 0.15
+        y = x + buf[(w + k - VOICE_DELAY) % n] * self._echo_fb
+        buf[(w + k) % n] = y
+        self._vd_w = (w + frames) % n
+        return y
+
+    def _stutter(self, x: np.ndarray, frames: int) -> np.ndarray:
+        """Keep the rolling history fed; replace the signal while a grab is
+        playing, fading out over the tail so it does not end on a click."""
+        h = self._st_hist
+        n = len(h)
+        w = self._st_hw
+        k = np.arange(frames)
+        h[(w + k) % n] = x
+        self._st_hw = (w + frames) % n
+
+        if self._st_left <= 0:
+            return x
+        idx = (self._st_pos + k) % len(self._st_buf)
+        out = self._st_buf[idx]
+        self._st_pos = int((self._st_pos + frames) % len(self._st_buf))
+        left = self._st_left - k
+        fade = np.clip(left / (0.25 * SAMPLE_RATE), 0.0, 1.0)
+        self._st_left -= frames
+        return out * fade
+
+    def _pitch_shift(self, x: np.ndarray, frames: int, ratio: float) -> np.ndarray:
+        """Granular delay-line pitch shifter: two taps chase the write head at
+        `ratio` speed, each windowed by a half-offset sine and crossfaded so
+        the periodic tap-wrap is inaudible. ~25 ms latency."""
         n = np.arange(frames)
-
-        # Noise gate: door opens for speech, stays shut for room hiss
-        # (which would otherwise be robotized into an annoying drone).
-        rms = float(np.sqrt((x ** 2).mean()))
-        self._gate = 0.85 * self._gate + 0.15 * rms
-        x = x * np.clip((self._gate - 0.004) / 0.012, 0.0, 1.0)
-
-        # Write the block into the ring buffer.
         w = self._ps_w
         self._ps_buf[(w + n) % PS_BUF] = x
         self._ps_w = (w + frames) % PS_BUF
 
-        # Two pitch-shift taps, half a window apart.
-        self._pshift += (self.target_rate - self._pshift) * 0.15
-        dphi = (1.0 - self._pshift) / PS_WIN
+        dphi = (1.0 - ratio) / PS_WIN
         phase = (self._ps_phase + dphi * n) % 1.0
         self._ps_phase = float((self._ps_phase + dphi * frames) % 1.0)
         shifted = np.zeros(frames)
@@ -558,15 +772,43 @@ class GloveSynth:
             g = np.sin(np.pi * p)
             shifted += tap * g
             gain_sum += g
-        shifted /= gain_sum + 1e-6
+        return shifted / (gain_sum + 1e-6)
 
-        # Feedback echo; hand motion controls how long the trails ring.
-        self._echo_fb += (self.target_echo - self._echo_fb) * 0.15
-        ew = self._echo_w
-        y = shifted + self._echo_buf[(ew + n - ECHO_DELAY) % ECHO_LEN] * self._echo_fb
-        self._echo_buf[(ew + n) % ECHO_LEN] = y
-        self._echo_w = (ew + frames) % ECHO_LEN
-        return y
+    def _noise_gate(self, x: np.ndarray) -> np.ndarray:
+        """Door opens for speech, stays shut for room hiss — which would
+        otherwise be robotized into an annoying drone."""
+        rms = float(np.sqrt((x ** 2).mean()))
+        self._gate = 0.85 * self._gate + 0.15 * rms
+        return x * np.clip((self._gate - 0.004) / 0.012, 0.0, 1.0)
+
+    def _process_voice(self, x: np.ndarray, frames: int) -> np.ndarray:
+        """Voice-hand chain: gate -> pitch -> stutter -> delay -> reverb.
+
+        Returns the block already at its own level; panning happens in the
+        callback so the voice keeps a stereo position independent of the
+        instrument's.
+        """
+        k = 0.15
+        self._v_pitch += (self.target_voice_pitch - self._v_pitch) * k
+        self._v_reverb += (self.target_voice_reverb - self._v_reverb) * k
+        self._v_pan += (self.target_voice_pan - self._v_pan) * k
+        self._v_vol += (self.target_voice_volume - self._v_vol) * k
+
+        y = self._noise_gate(x)
+        if not self.voice_fx_on:
+            # Open hand: completely dry. Still feed the stutter history so a
+            # flick right after re-activating has something to grab.
+            self._stutter(y, frames)
+            return y * self._v_vol
+
+        y = self._pitch_shift(y, frames, self._v_pitch)
+        y = self._stutter(y, frames)
+        if self.voice_delay_on:
+            y = self._voice_delay(y, frames)
+        if self._v_reverb > 1e-3:
+            wet = self._reverb(y, frames)
+            y = y * (1.0 - 0.6 * self._v_reverb) + wet * self._v_reverb
+        return y * self._v_vol
 
     def _render_tone(self, frames: int) -> np.ndarray:
         """One block of the selected instrument at the current frequency.

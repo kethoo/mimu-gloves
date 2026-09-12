@@ -39,6 +39,7 @@ DEVICE_NAME = "MIMU-GLOVE"
 BASELINE_PACKETS = 80    # ~0.8 s of "hold still" used as the zero pose
 PUNCH_THRESHOLD = 12.0   # linear accel magnitude (m/s^2) that counts as a punch
 SCENE_BURST_CAP = 4      # more missed presses than this means a glove reboot
+FROZEN_WARN_S = 2.0      # identical orientation for this long = stalled sensor
 # Orientation smoothing. The BNO08x fuses on-chip and its output is already
 # very clean (jitter measured at ~0.04 deg), so this is deliberately lighter
 # than the original sketch's 0.85 — at 50 Hz that gives ~40 ms of lag instead
@@ -73,6 +74,74 @@ FLEX_VALID_MIN = 800.0
 
 def _wrap(deg: float) -> float:
     return (deg + 180.0) % 360.0 - 180.0
+
+
+class _Discovery:
+    """One BLE scanner shared by every glove.
+
+    Two gloves means two reconnect coroutines, and running two BleakScanners
+    at once is unreliable on CoreBluetooth. So scanning is serialized behind a
+    lock and the results are handed out by name: whoever asks first pays for
+    the scan, and the other hand takes its device from the same sweep.
+    """
+
+    def __init__(self, timeout: float = 8.0) -> None:
+        self.timeout = timeout
+        self._lock = asyncio.Lock()
+        self._seen: dict = {}
+
+    def _take(self, name: str):
+        """Exact match first, then prefix — so 'MIMU-GLOVE' still finds a
+        glove running the older un-suffixed firmware."""
+        if name in self._seen:
+            return self._seen.pop(name)
+        for found in list(self._seen):
+            if found.startswith(name):
+                return self._seen.pop(found)
+        return None
+
+    async def find(self, name: str):
+        async with self._lock:
+            device = self._take(name)
+            if device is not None:
+                return device          # another hand's scan already found it
+            from bleak import BleakScanner
+
+            # `return_adv=True` and `adv.local_name` are load-bearing, not
+            # style. CoreBluetooth caches a peripheral's name from the first
+            # time it ever saw it, so after reflashing a board to a new hand
+            # `dev.name` keeps reporting the OLD name indefinitely while
+            # `adv.local_name` carries what it is actually advertising now.
+            # Measured on this machine: dev.name "MIMU-GLOVE",
+            # adv.local_name "MIMU-GLOVE-V", same device, same instant.
+            self._seen = {}
+            found = await BleakScanner.discover(
+                timeout=self.timeout, return_adv=True
+            )
+            for dev, adv in found.values():
+                resolved = adv.local_name or dev.name
+                if resolved:
+                    self._seen[resolved] = dev
+            return self._take(name)
+
+
+def run_gloves(sources: "list[BleGloveSource]") -> None:
+    """Drive several gloves from ONE background thread and ONE event loop.
+
+    Do not call `start()` on each source instead: that spawns a thread per
+    glove, each with its own `asyncio.run`, so two independent event loops end
+    up driving bleak concurrently. One loop with `gather` is the supported
+    shape, and it lets the gloves share a single scanner.
+    """
+    import threading
+
+    async def _all() -> None:
+        discovery = _Discovery()
+        await asyncio.gather(*(s._ble_loop(discovery) for s in sources))
+
+    for src in sources:
+        src._running = True
+    threading.Thread(target=lambda: asyncio.run(_all()), daemon=True).start()
 
 
 class _FlexChannel:
@@ -121,8 +190,24 @@ class _FlexChannel:
 
 
 class BleGloveSource(GloveSource):
-    def __init__(self) -> None:
+    """One glove. Two of these can run side by side — see run_gloves().
+
+    `name` is the BLE advertised name to look for; matching is by prefix, so
+    the default finds a glove on either the old single-hand firmware
+    ("MIMU-GLOVE") or the new suffixed builds. `tag` prefixes every event this
+    glove emits ("V:punch"), which is how main.py tells the hands apart.
+    """
+
+    def __init__(self, name: str = DEVICE_NAME, tag: str = "",
+                 label: str | None = None, managed: bool = False) -> None:
         super().__init__()
+        self.name = name
+        self.tag = tag
+        self.label = label or name
+        # `managed` means run_gloves() owns this source's event loop, so
+        # start() must not spawn a second thread of its own. Anything that
+        # composes sources (MergedGloveSource) still calls start() blindly.
+        self.managed = managed
         self._baseline: list[tuple[float, float, float]] = []
         self._offset: tuple[float, float, float] | None = None
         self._smoothed = [0.0, 0.0, 0.0]
@@ -152,25 +237,34 @@ class BleGloveSource(GloveSource):
         watch when a finger 'does nothing'."""
         return (self._flex.span, self._flex2.span)
 
-    def _run(self) -> None:
-        asyncio.run(self._ble_loop())
+    def start(self) -> None:
+        if self.managed:
+            return          # run_gloves() already has it
+        super().start()
 
-    async def _ble_loop(self) -> None:
+    def _run(self) -> None:
+        asyncio.run(self._ble_loop(_Discovery()))
+
+    async def _ble_loop(self, discovery: "_Discovery") -> None:
         """Stay connected for as long as the app runs.
 
         The glove reboots itself to recover a wedged sensor, and BLE links
         drop for ordinary radio reasons. Neither should end a performance, so
         this reconnects indefinitely; only stop() ends the loop.
+
+        Takes a shared `discovery` rather than scanning itself: two gloves
+        means two of these coroutines, and two concurrent BleakScanners is
+        unreliable on CoreBluetooth.
         """
-        from bleak import BleakClient, BleakScanner
+        from bleak import BleakClient
 
         searching_announced = False
         while self._running:
-            device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=10)
+            device = await discovery.find(self.name)
             if device is None:
                 if not searching_announced:
                     print(
-                        f"\n[looking for '{DEVICE_NAME}' — is the glove powered? "
+                        f"\n[looking for '{self.name}' — is the glove powered? "
                         "still searching...]"
                     )
                     searching_announced = True
@@ -182,7 +276,7 @@ class BleGloveSource(GloveSource):
                     # the pose baseline must be recaptured on every connection.
                     self._reset_pose_calibration()
                     print(
-                        f"Connected to {DEVICE_NAME}. "
+                        f"Connected to {self.label}. "
                         "Hold the glove still to calibrate..."
                     )
                     await client.start_notify(CHAR_UUID, self._on_packet)
@@ -275,11 +369,16 @@ class BleGloveSource(GloveSource):
         now = time.monotonic()
         current = (roll, pitch, yaw)
         if current == self._last_raw:
-            if self._frozen_since and now - self._frozen_since > 5.0:
+            # 2 s, not 5: measured, a stalled BNO08x on this hardware only
+            # stays frozen for ~3 s before the firmware gives up and reboots
+            # the ESP32, so a 5 s threshold never fired and the freeze looked
+            # like a mapping bug instead of a stalled sensor.
+            if self._frozen_since and now - self._frozen_since > FROZEN_WARN_S:
                 if not self._warned_frozen:
                     print(
-                        "\n[WARNING: sensor values frozen for 5s — the BNO08x "
-                        "has stalled. Power-cycle the glove.]"
+                        f"\n[WARNING: {self.label} orientation frozen for "
+                        f"{FROZEN_WARN_S:.0f}s — the BNO08x has stalled. The link is "
+                        "fine; the sensor is not. Check its 3V3 and SDA/SCL.]"
                     )
                     self._warned_frozen = True
         else:
@@ -319,7 +418,7 @@ class BleGloveSource(GloveSource):
 
         accel_mag = (lax * lax + lay * lay + laz * laz) ** 0.5
         if accel_mag > PUNCH_THRESHOLD and self._punch_armed:
-            self.events.append("punch")
+            self.events.append(self.tag + "punch")
             self._punch_armed = False
         elif accel_mag < 3.0:
             self._punch_armed = True
@@ -338,7 +437,7 @@ class BleGloveSource(GloveSource):
                 # glove reboot, not that someone pressed the button 300 times.
                 missed = count - self._presses
                 for _ in range(missed if 0 < missed <= SCENE_BURST_CAP else 1):
-                    self.events.append("scene")
+                    self.events.append(self.tag + "scene")
                 self._presses = count
 
         if FLEX_SWAP:
