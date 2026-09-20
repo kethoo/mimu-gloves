@@ -236,7 +236,8 @@ sound sources — `tilt=pitch, yaw=pan, flex=volume` on both hands. That is one
 instrument played twice: it duplicated parameters the instrument only needs one
 of, and it failed the test *"could you swap the hands and have it still make
 sense?"* Splitting by role instead means scrubbing a recording is meaningless
-on the hand that is playing live, which is the point. See `renewed-design.md`.
+on the hand that is playing live, which is the point. See `gestures-guide.md` for how to play it and `renewed-design.md`
+for why it is shaped this way.
 
 **The loop hand is never idle.** Before anything is recorded it shapes the live
 microphone instead — reverb, delay, pitch. It is always the "space and time"
