@@ -35,7 +35,7 @@ import time
 import webbrowser
 
 import mapping
-import voice_mapping
+import loop_mapping
 from sensors import DemoGloveSource, SimulatedGloveSource
 from synth import GloveSynth
 
@@ -98,6 +98,42 @@ def _resolve_device(spec: str | None, want_output: bool):
             "  Be more specific, or pass the index."
         )
     return matches[0]
+
+
+# Combination gestures. These live here because they are the only things
+# that need BOTH hands at once — neither mapping module can see the other's
+# frame, and neither should.
+WIDTH_RANGE = 60.0     # degrees of roll difference for the full sweep
+_combo_state = {"both_fist": False, "both_open": False}
+
+
+def combo(live, loop, synth) -> None:
+    """What the two hands do together, as opposed to each on its own."""
+    # Relative roll -> stereo width. The one thing two IMUs give that one
+    # cannot: palms aligned collapses toward mono, opposed widens it.
+    spread = abs(live.roll - loop.roll)
+    synth.target_width = min(spread / WIDTH_RANGE, 1.0) * 1.6
+
+    # Both hands in the same posture at once: deliberate, unmistakable, and
+    # impossible to hit by accident while playing. Edge-triggered so holding
+    # them does not re-fire.
+    from mapping import _read_posture
+
+    a = _read_posture(live.flex, live.flex2)
+    b = _read_posture(loop.flex, loop.flex2)
+
+    both_fist = a == "fist" and b == "fist"
+    if both_fist and not _combo_state["both_fist"]:
+        synth.set_freeze(True)
+        print("\n[BOTH FISTS — everything held]")
+    _combo_state["both_fist"] = both_fist
+
+    both_open = a == "open" and b == "open"
+    if both_open and not _combo_state["both_open"]:
+        synth.set_gate(False)
+        synth.set_freeze(False)
+        print("\n[BOTH HANDS OPEN — silence]")
+    _combo_state["both_open"] = both_open
 
 
 def scan() -> None:
@@ -210,14 +246,14 @@ def main() -> None:
     )
     print(f"[audio  {synth.describe_devices()}]")
     hand = mapping.HandState()
-    voice = voice_mapping.VoiceState()
+    voice = loop_mapping.LoopState()
     mapping.apply_scene(synth, hand)  # scene 1 sets instrument, scale and modes
     two_hands = voice_source is not None or hasattr(source, "_target_voice")
     if two_hands:
         # Tells mapping.py to stop writing the legacy live-voice targets: the
         # voice hand owns them now, and two writers at 100 Hz would fight.
         synth.voice_hand = True
-        voice_mapping.apply_preset(synth, voice)
+        loop_mapping.apply_preset(synth, voice)
         if voice_source is not None:
             # Default to the glove's own microphone: hold its button to
             # record a phrase, and the voice hand shapes the result. Pass
@@ -234,7 +270,7 @@ def main() -> None:
                       "laptop mic.)")
         else:
             print("Second hand available: press 'h' to switch the keys/UI "
-                  "between the instrument and voice hands. 'l' starts the mic.")
+                  "between the LIVE and LOOP hands. 'l' starts the mic.")
 
     if voice_source is not None:
         # One thread, one event loop for both gloves. Starting each source
@@ -256,14 +292,15 @@ def main() -> None:
             vframe = (voice_source.latest if voice_source is not None
                       else getattr(source, "latest_voice", None))
             if vframe is not None:
-                voice_mapping.apply(vframe, synth, voice)
+                loop_mapping.apply(vframe, synth, voice)
+                combo(frame, vframe, synth)
             events = list(source.drain_events())
             if voice_source is not None:
                 events += voice_source.drain_events()
             for event in events:
                 # "V:" marks the voice hand; anything else is the instrument.
                 if event.startswith("V:"):
-                    voice_mapping.handle_event(event[2:], synth, voice)
+                    loop_mapping.handle_event(event[2:], synth, voice)
                     continue
                 mapping.handle_event(event, synth, hand)
                 if midi is not None:

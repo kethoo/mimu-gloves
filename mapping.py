@@ -1,17 +1,26 @@
-"""The instrument's "personality": hand state -> sound parameters.
+"""The LIVE hand: everything about the note happening right now.
+
+One of two hands, and deliberately asymmetric with the other. This hand makes
+sound — pitch, brightness, dynamics, articulation — and never touches an
+effect. `loop_mapping.py` shapes what has already been captured and never
+plays a note. There is exactly one of each parameter in the instrument, and
+each belongs to exactly one hand; see renewed-design.md.
 
 Gesture vocabulary:
 
-  |> rotate wrist (roll)        -> filter cutoff / brightness
   ^v tilt hand up/down (pitch)  -> musical pitch, quantized to the scene's scale
+  |> rotate wrist (roll)        -> filter cutoff / brightness
   <> point left/right (yaw)     -> stereo pan
   -- index finger bend (flex)   -> volume / expression
+  ~~ middle finger bend         -> vibrato depth
+  >> motion                     -> how hard a wrist flick lands
   () fist, both fingers curled  -> activate the sound
   || open hand, both straight   -> deactivate it
   ^  point: index straight,
      middle curled              -> next instrument
   *  wrist flick                -> drum hit
   #  button, short press        -> next scene
+  #  button, hold               -> capture the phrase into the loop
 
 Two notes on what the hardware can actually sense.
 
@@ -236,12 +245,6 @@ def apply(frame: SensorFrame, synth: GloveSynth,
     # pitch instead of "silent up high".
     synth.target_cutoff = max(cutoff, synth.target_freq * 1.4)
 
-    # Roll keeps its old second job of sweeping the recorded voice: playback
-    # speed in loop mode, scrub position in granular, slice choice in slice
-    # mode. Those need a continuous sweep and roll is the natural one for it.
-    synth.target_rate = 2.0 ** (2.0 * roll_u - 1.0)
-    synth.target_scrub = roll_u
-
     # point left/right -> pan
     synth.target_pan = 2.0 * _norm(frame.yaw, YAW_RANGE) - 1.0
 
@@ -253,14 +256,18 @@ def apply(frame: SensorFrame, synth: GloveSynth,
     else:
         synth.target_amp = 0.12 + 0.35 * min(frame.motion, 1.0)
 
-    # motion -> delay feedback on the live voice: wave your hand, it rings
-    synth.target_echo = 0.15 + 0.55 * min(frame.motion, 1.0)
+    # Motion -> how hard a wrist flick lands. Percussion works this way: move
+    # faster, hit harder. Previously this hand wrote target_echo, which the
+    # loop hand overwrote on the very same tick, so the axis did nothing.
+    synth.target_hit = 0.35 + 0.65 * min(frame.motion, 1.0)
 
-    # With no voice glove attached, this hand keeps its old live-voice duty so
-    # `l` mode behaves exactly as it did before the second hand existed. When
-    # a voice glove IS driving, voice_mapping owns these and this must not
-    # fight it at the control rate.
+    # Single-glove fallback. With no loop hand attached this hand keeps the
+    # old duties so nothing regresses; when a loop hand IS driving, it owns
+    # these and this must not fight it at the control rate.
     if not synth.voice_hand:
+        synth.target_rate = 2.0 ** (2.0 * roll_u - 1.0)
+        synth.target_scrub = roll_u
+        synth.target_echo = 0.15 + 0.55 * min(frame.motion, 1.0)
         synth.target_voice_pitch = synth.target_rate
         synth.target_voice_volume = 0.9
 

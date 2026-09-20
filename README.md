@@ -176,61 +176,101 @@ is why that one needs the longer dwell. Bending the index past the posture
 threshold always re-opens the gate, so a stray deactivate can never strand you
 in silence.
 
-## The voice hand (second glove)
+## The two hands (second glove)
 
-A second ESP32 with the same pinout — BNO08x, two flex sensors, button, LED,
-mic — processes the **microphone** while the first hand plays the instrument.
-The two gloves drive disjoint parameter sets, which is the MiMu model: not two
-hands averaged into one voice, but two independent controllers over one synth.
+A second ESP32 with the same pinout. The hands are **deliberately asymmetric**:
+one makes sound, the other shapes what has already been captured. Neither does
+the other's job, and there is exactly one of each parameter in the instrument,
+owned by exactly one hand.
 
-| Voice-hand action | Voice effect |
+### Live hand — the note happening now
+
+| Gesture | Controls |
 | --- | --- |
-| ↕️ Tilt up/down | Voice pitch, ±12 semitones, continuous |
-| ↪️ Rotate wrist | Reverb amount |
-| 👈 Point left/right | Voice stereo pan |
-| 🤏 Index bend | Voice volume |
-| ✊ Fist | Voice effects ON |
-| 🖐️ Open hand | Normal voice — fully dry |
-| 🤚 Point (index straight, middle bent) | Toggle delay |
-| 💥 Wrist flick | Stutter: freeze the last 150 ms and repeat it |
-| 👆 Button, short press | Next voice preset |
-| 👆 Button, hold | Record a take on that glove's mic |
+| ↕️ Tilt | Musical pitch, quantized to the scene's scale |
+| ↪️ Roll | Brightness (filter cutoff) |
+| 👈 Yaw | Stereo pan |
+| 🤏 Index bend | Volume / expression |
+| Middle bend | Vibrato |
+| Motion | How hard a wrist flick lands |
+| ✊ / 🖐️ | Sound on / off |
+| 🤚 Point | Next instrument |
+| 💥 Wrist flick | Drum hit |
+| Button tap / hold | Next scene / capture into the loop |
+
+This hand never touches an effect.
+
+### Loop hand — time and space
+
+| Gesture | Controls |
+| --- | --- |
+| ↪️ Roll | **Scrub** the playhead through the recording |
+| ↕️ Tilt | Loop speed, and mic pitch when there is no loop |
+| 👈 Yaw | Where the captured material sits in the stereo field |
+| 🤏 Index bend | Blend between live and looped |
+| Middle bend | Reverb amount |
+| Motion | Delay feedback — wave and the repeats ring on |
+| ✊ Fist | **Freeze** — hold this moment, time stops |
+| 🖐️ Open | Release it |
+| 🤚 Point | Cycle loop mode: normal → granular → slices |
+| 💥 Wrist flick | Fire a slice, or stutter |
+| Button tap / hold | Next preset / overdub |
+
+This hand never plays a note.
+
+### Together
+
+| Gesture | Effect |
+| --- | --- |
+| Relative roll | Stereo width — the one thing two IMUs give that one cannot |
+| Both fists | Total freeze |
+| Both hands open | Silence |
 
 ```bash
 python main.py --ble --voice-glove --web    # both hands
-python main.py --scan                        # shows which gloves are advertising
+python main.py --scan                        # which gloves are advertising
 ```
 
+**Why asymmetric.** An earlier version pointed the same vocabulary at two
+sound sources — `tilt=pitch, yaw=pan, flex=volume` on both hands. That is one
+instrument played twice: it duplicated parameters the instrument only needs one
+of, and it failed the test *"could you swap the hands and have it still make
+sense?"* Splitting by role instead means scrubbing a recording is meaningless
+on the hand that is playing live, which is the point. See `renewed-design.md`.
+
+**The loop hand is never idle.** Before anything is recorded it shapes the live
+microphone instead — reverb, delay, pitch. It is always the "space and time"
+hand; it simply has more to do once material exists. The synth routes this
+automatically.
+
 **Flash the boards with different hands.** `HAND_SUFFIX` in `glove_ble.ino` is
-`"-I"` (instrument) or `"-V"` (voice), so they advertise as `MIMU-GLOVE-I` and
-`MIMU-GLOVE-V`. Two boards on the same sketch would advertise identically and
-the laptop would connect to whichever it saw first — nondeterministically, run
-to run, with no error. Name matching is by prefix, so a board still on the old
-un-suffixed firmware keeps working as the instrument hand.
+`-I` or `-V`, set by a build flag rather than editing the file:
 
-**Live processing uses the laptop microphone, not the glove's.** BLE cannot
-carry live audio — ~32 kB/s of PCM against a link that manages a fraction of
-that, plus buffering latency. The glove's own mic works the way the instrument
-hand's does: record a take on the glove, transfer it afterwards. Wear
-headphones; the processed output re-entering the mic is a feedback loop.
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32:UploadSpeed=115200 \
+  --build-property "compiler.cpp.extra_flags=-DHAND_VOICE" \
+  --upload -p /dev/cu.usbserial-XXX esp32/glove_ble
+python monitor.py --identify     # which board is on which port
+```
 
-The voice chain is `gate → pitch shift → stutter → delay → reverb → level →
-pan`, entirely separate from the instrument's ladder filter and pan. The
-reverb is Schroeder: four parallel combs into two series allpasses, T60 ≈
-1.45 s. Every delay in it is longer than one audio block on purpose — that is
-what keeps it vectorized, since a delay shorter than a block would need its
-own output from within the same block and force a per-sample loop. Both hands
-live, with reverb and delay running, measured 9.6% of the audio budget.
+Two boards on the same sketch would advertise identically and the laptop would
+connect to whichever it saw first, nondeterministically, with no error.
 
-**Presets** (button tap) set reverb, delay and a pitch offset together: `Dry`,
-`Hall`, `Slap`, `Cavern`, `Chipmunk`, `Demon`. The offset is *added* to what
-tilt is asking for, so a preset colours the hand rather than overriding it.
-Edit `PRESETS` in `voice_mapping.py`.
+**Live processing uses the laptop microphone.** BLE cannot carry live audio —
+~32 kB/s against a link measured at 30 kB/s with the sensor stream already off,
+at 100 ms+ latency. The gloves' own mics record takes that transfer afterwards.
+Wear headphones; processed output re-entering a live mic is a feedback loop.
+
+The processing chain is `gate → pitch → stutter/freeze → delay → reverb →
+level → pan`, entirely separate from the live hand's ladder filter and pan. The
+reverb is Schroeder — four parallel combs into two series allpasses, T60 ≈
+1.45 s. Every delay in it is longer than one audio block on purpose: that is
+what keeps it vectorized, since a shorter delay would need its own output from
+within the same block. Both hands live with reverb and delay measured **5.4%**
+of the audio budget.
 
 **Trying it without a second board.** Press `h` to switch which hand the keys
-drive, or click the hand buttons in the browser UI. Both hands exist in
-software whatever hardware is attached, so the whole two-hand mapping is
-playable and testable today.
+drive, or click the hand buttons in the browser UI.
 
 ## Recording on the glove (button + INMP441)
 

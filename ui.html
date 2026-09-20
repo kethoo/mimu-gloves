@@ -84,8 +84,8 @@
   <div class="panel">
     <div class="label">Hand — drag the pad</div>
     <div class="btnrow" style="grid-template-columns:1fr 1fr; margin-bottom:10px">
-      <button id="hand-i" class="on">🎹 Instrument hand</button>
-      <button id="hand-v">🎤 Voice hand</button>
+      <button id="hand-i" class="on">🎹 Live hand</button>
+      <button id="hand-v">🔁 Loop hand</button>
     </div>
     <div class="hint" id="handhint" style="margin-bottom:8px">
       Roll = brightness, tilt = pitch, yaw = pan, index = volume.
@@ -188,9 +188,11 @@ function send(obj) { if (connected) ws.send(JSON.stringify({ ...obj, hand: HAND 
 function sendEvent(name) { send({ type: "event", name }); }
 
 const HINTS = {
-  1: "Roll = brightness, tilt = pitch, yaw = pan, index = volume.",
-  2: "Roll = reverb, tilt = voice pitch, yaw = voice pan, index = voice volume. " +
-     "Fist = FX on, open = dry, point = delay, PUNCH = stutter.",
+  1: "Tilt = pitch, roll = brightness, yaw = pan, index = volume, middle = vibrato. " +
+     "Fist/open = sound on/off, point = next instrument, PUNCH = drum hit.",
+  2: "Roll = scrub, tilt = loop speed, yaw = its pan, index = live/loop blend, " +
+     "middle = reverb. Fist = FREEZE, open = release, point = cycle mode, " +
+     "PUNCH = slice/stutter.",
 };
 function setHand(h) {
   HAND = h;

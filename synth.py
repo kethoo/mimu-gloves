@@ -156,6 +156,7 @@ class GloveSynth:
         self.target_rate = 1.0       # voice-loop playback speed (0.5..2)
         self.target_scrub = 0.5      # granular position / slice selector, 0..1
         self.target_vibrato = 0.0    # pitch wobble depth, 0..1 (second finger)
+        self.target_hit = 1.0        # wrist-flick velocity, from hand motion
 
         # Smoothed values owned by the audio callback.
         self._freq = self.target_freq
@@ -240,7 +241,18 @@ class GloveSynth:
         # this set, those takes feed the voice effects instead of the
         # instrument bus — the source is the board's microphone, the control
         # is the voice hand, they just are not simultaneous.
-        self.voice_from_loop = False
+        # Automatic: the loop hand shapes the recording when there is one,
+        # and the live microphone when there is not. It is always the "space
+        # and time" hand; it simply has more to do once material exists.
+        self.voice_from_loop = True
+        # Loop-hand freeze: hold the current grab indefinitely rather than
+        # letting it decay like a wrist-flick stutter does.
+        self.freeze_on = False
+        self._st_hold = False
+        # Stereo width from the two hands' relative roll. 0 = mono,
+        # 1 = normal, 2 = wide. Neither hand can express this alone.
+        self.target_width = 1.0
+        self._width = 1.0
         self.voice_fx_on = True       # fist on / open hand = dry
         self.voice_delay_on = False   # "point" toggles it
         self.target_voice_pitch = 1.0     # 0.5 (octave down) .. 2.0 (up)
@@ -319,10 +331,15 @@ class GloveSynth:
         self._stream.close()
 
     def pluck(self) -> None:
-        """Trigger a percussive hit (punch gesture). On a struck instrument
-        it also re-articulates the note, so punching re-rings the bell or
-        re-plucks the string instead of only firing the drum layer."""
-        self._pluck_env = 1.0
+        """Trigger a percussive hit (wrist flick). On a struck instrument it
+        also re-articulates the note, so a flick re-rings the bell or
+        re-plucks the string instead of only firing the drum layer.
+
+        Velocity comes from how fast the hand was moving, which is how
+        percussion actually works — every hit used to land at exactly the
+        same level.
+        """
+        self._pluck_env = min(max(self.target_hit, 0.0), 1.0)
         if ENVELOPES[self.instrument][3]:
             self._note_on()
 
@@ -632,16 +649,27 @@ class GloveSynth:
 
         # Voice hand: its own chain, its own level, its own pan. Summed at the
         # very end so nothing the instrument glove does can touch it.
+        # The loop hand's chain gets the recording when one is playing, and
+        # the live microphone when it is not — so the hand always has
+        # something to shape rather than sitting dead before you record.
         live_in = self._live_in
         v_in = loop_block
-        if self.live_on and live_in is not None and len(live_in) == frames:
-            v_in = live_in if v_in is None else v_in + live_in
+        if v_in is None and self.live_on and live_in is not None and len(live_in) == frames:
+            v_in = live_in
         if v_in is not None:
             v = self._process_voice(v_in, frames)
             v = np.tanh(v)   # its own soft clip; reverb tails can stack up
             v_angle = (self._v_pan + 1.0) * (np.pi / 4.0)
             left = left + v * np.cos(v_angle)
             right = right + v * np.sin(v_angle)
+
+        # Stereo width, driven by how far the two hands' roll differs.
+        # Mid/side: collapse toward mono at 0, exaggerate the difference above 1.
+        self._width += (self.target_width - self._width) * k
+        if abs(self._width - 1.0) > 1e-3:
+            mid = (left + right) * 0.5
+            side = (left - right) * 0.5 * self._width
+            left, right = mid + side, mid - side
 
         out[:, 0] = left.astype(np.float32)
         out[:, 1] = right.astype(np.float32)
@@ -670,6 +698,35 @@ class GloveSynth:
     def toggle_voice_delay(self) -> None:
         self.voice_delay_on = not self.voice_delay_on
         print("\n[voice delay on]" if self.voice_delay_on else "\n[voice delay off]")
+
+    def set_freeze(self, on: bool) -> None:
+        """Loop hand fist: hold the current moment. Reuses the stutter grab,
+        but without the decay — time simply stops until the hand opens."""
+        if on == self.freeze_on:
+            return
+        self.freeze_on = on
+        if on:
+            self.trigger_stutter()
+            self._st_hold = True
+            print("\n[FROZEN]")
+        else:
+            self._st_hold = False
+            self._st_left = int(0.25 * SAMPLE_RATE)   # let it fade, not cut
+            print("\n[released]")
+
+    def cycle_loop_mode(self) -> None:
+        """normal -> granular -> slices -> normal, on one posture instead of
+        three separate keyboard toggles."""
+        if self.granular_on:
+            self.granular_on, self.slices_on = False, True
+            mode = "slices: flick fires a chunk"
+        elif self.slices_on:
+            self.granular_on, self.slices_on = False, False
+            mode = "normal loop"
+        else:
+            self.granular_on, self.slices_on = True, False
+            mode = "granular: roll scrubs the playhead"
+        print(f"\n[loop mode: {mode}]")
 
     def trigger_stutter(self) -> None:
         """Wrist flick: freeze the last STUTTER_LEN of voice and repeat it.
@@ -739,6 +796,12 @@ class GloveSynth:
         h[(w + k) % n] = x
         self._st_hw = (w + frames) % n
 
+        if self._st_hold:
+            # Frozen: replay the grab forever, no decay, no fade.
+            idx = (self._st_pos + k) % len(self._st_buf)
+            out = self._st_buf[idx]
+            self._st_pos = int((self._st_pos + frames) % len(self._st_buf))
+            return out
         if self._st_left <= 0:
             return x
         idx = (self._st_pos + k) % len(self._st_buf)
