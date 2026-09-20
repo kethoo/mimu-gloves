@@ -260,6 +260,10 @@ def main() -> None:
             # --voice-mic laptop for the live (lower latency) path instead.
             if _flag_value("--voice-mic") == "laptop":
                 synth.live_on = True
+                # Also route the chain AT the microphone. Without this the
+                # loop still takes priority whenever one is playing, so the
+                # flag silently did nothing once you had recorded anything.
+                synth.voice_from_loop = False
                 print("Voice glove shapes the LAPTOP mic (live) "
                       "— wear headphones.")
             else:
