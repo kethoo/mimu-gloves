@@ -5,7 +5,13 @@ BNO08x and how much the readings are moving, and shouts the moment the
 sensor drops out or comes back. Use it for a wiggle test: run this, then
 disturb one wire at a time and watch which one causes a dropout.
 
-    python diagnose.py
+    python diagnose.py              watch whichever glove is advertising
+    python diagnose.py --voice      watch the voice hand (MIMU-GLOVE-V)
+    python diagnose.py --instrument watch the instrument hand (MIMU-GLOVE-I)
+
+Useful when the board runs on a powerbank: there is no serial then, so this
+is the only window into whether it is booting, holding the link and sending
+real sensor data.
 
 Ctrl+C to stop.
 """
@@ -21,7 +27,7 @@ import time
 from ble_receiver import FLEX_MIN_SPAN, FLEX_VALID_MIN
 
 CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
-DEVICE_NAME = "MIMU-GLOVE"
+DEVICE_NAME = "MIMU-GLOVE"   # prefix; --voice / --instrument / --name override
 
 
 class Health:
@@ -73,12 +79,30 @@ class Health:
 
 
 async def main() -> None:
-    from bleak import BleakClient, BleakScanner
+    import sys
 
-    print("Scanning for the glove...")
-    dev = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=15)
+    from bleak import BleakClient
+
+    from ble_receiver import _Discovery
+
+    # Which hand to watch. Defaults to the base name, which prefix-matches
+    # either suffixed board or an older un-suffixed one.
+    name = DEVICE_NAME
+    if "--voice" in sys.argv:
+        name = "MIMU-GLOVE-V"
+    elif "--instrument" in sys.argv:
+        name = "MIMU-GLOVE-I"
+    for i, a in enumerate(sys.argv):
+        if a == "--name" and i + 1 < len(sys.argv):
+            name = sys.argv[i + 1]
+
+    print(f"Scanning for {name}...")
+    # Shared with ble_receiver rather than find_device_by_name: that matches
+    # on the CACHED device name, which CoreBluetooth keeps from the first
+    # time it saw a board — so a reflashed glove is never found.
+    dev = await _Discovery(timeout=15).find(name)
     if dev is None:
-        print(f"'{DEVICE_NAME}' not found — is the ESP32 powered?")
+        print(f"'{name}' not found — is the ESP32 powered and in range?")
         return
 
     h = Health()
