@@ -196,7 +196,10 @@ class GloveSynth:
 
         # Voice loop: recorded from the mic, replayed through the same
         # gesture-controlled filter/pan chain as the oscillator.
-        self.drone_on = True
+        # Silent until played. An instrument that sounds the moment you
+        # launch it is just noise you have to go and switch off — a fist, a
+        # bent finger or `m` starts it.
+        self.drone_on = False
         self.loop_on = False
         self._loop_buf: np.ndarray | None = None
         self._loop_pos = 0.0

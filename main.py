@@ -308,11 +308,18 @@ def main() -> None:
 
         midi = MidiOut(_flag_value("--midi-port"))
 
+    # The scripted demo plays itself, so it has to start sounding.
+    start_sounding = "--demo" in sys.argv
+
     synth = GloveSynth(
         input_device=_resolve_device(_flag_value("--audio-in"), want_output=False),
         output_device=_resolve_device(_flag_value("--audio-out"), want_output=True),
     )
     print(f"[audio  {synth.describe_devices()}]")
+    synth.drone_on = start_sounding
+    if not start_sounding:
+        print("[silent until you play — make a fist, bend the index finger, "
+              "or press 'm']")
     hand = mapping.HandState()
     voice = loop_mapping.LoopState()
     mapping.apply_scene(synth, hand)  # scene 1 sets instrument, scale and modes
