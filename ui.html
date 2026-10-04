@@ -11,6 +11,8 @@
     --warn: #fbbf24; --bad: #ef4444;
     --wide: 1180px;            /* content width; the gutter is body padding */
     --track: #272b38;          /* bar + chip backgrounds */
+    --gtrack: color-mix(in srgb, var(--text) 22%, transparent);  /* gauge tracks:
+               thin, and sitting on a tinted inner card, so they need more */
     --btn: #232736; --btn-hover: #2b3042;
     --pad: #171a22;            /* the XY pad ground */
     --punch: #2a2333; --punch-line: #4c3556;
@@ -26,6 +28,7 @@
     --text: #1b2030; --dim: #697086; --accent: #0d9488; --hot: #db2777;
     --warn: #b45309; --bad: #dc2626;
     --track: #e5e9f1;
+    --gtrack: color-mix(in srgb, var(--text) 16%, transparent);
     --btn: #eef1f6; --btn-hover: #e2e7f0;
     --pad: #f8fafc;
     --punch: #fdf2f8; --punch-line: #f9a8d4;
@@ -114,13 +117,27 @@
   /* ---- two-hand panel ---- */
   .hands { display:grid; grid-template-columns:1fr 1fr; gap:14px; width:100%; max-width:var(--wide); }
   @media (max-width:740px){ .hands{ grid-template-columns:1fr; } }
-  .hcard { background:var(--panel); border:1px solid var(--line); border-radius:16px;
-           padding:18px; position:relative; overflow:hidden; transition:border-color .15s; }
+  .hcard { background:
+             radial-gradient(130% 95% at 8% 0%,
+               color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 62%),
+             linear-gradient(170deg,
+               color-mix(in srgb, var(--accent) 5%, var(--panel)) 0%, var(--panel) 72%);
+           border:1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+           border-radius:18px; padding:20px 20px 18px; min-height:430px;
+           display:flex; flex-direction:column;
+           position:relative; overflow:hidden; transition:border-color .15s; }
+  .hcard.froz{ background:
+             radial-gradient(130% 95% at 8% 0%,
+               color-mix(in srgb, var(--hot) 11%, transparent) 0%, transparent 62%),
+             linear-gradient(170deg,
+               color-mix(in srgb, var(--hot) 6%, var(--panel)) 0%, var(--panel) 72%); }
   .hcard.act   { border-color:var(--accent); }
   .hcard.froz  { border-color:var(--hot); }
   .hcard.lost  { opacity:.55; }
   .hhdr { display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
-  .hname{ font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
+  .hname{ font-size:13px; letter-spacing:.08em; text-transform:uppercase;
+           color:var(--dim); display:flex; align-items:center; gap:8px; }
+  .hicon{ flex:none; }
   .hcard.act .hname{ color:var(--accent); } .hcard.froz .hname{ color:var(--hot); }
   .hlink{ font-size:11px; color:var(--dim); display:flex; align-items:center; gap:5px; }
   .ldot { width:7px; height:7px; border-radius:50%; background:var(--dot-off); }
@@ -137,7 +154,7 @@
   .hfill { height:100%; background:var(--accent); border-radius:3px; transition:width .08s linear; }
   .hcard.froz .hfill{ background:var(--hot); }
   .hval  { text-align:right; color:var(--text); font-variant-numeric:tabular-nums; }
-  .hbadges{ display:flex; gap:5px; flex-wrap:wrap; margin-top:10px; }
+  .hbadges{ display:flex; gap:6px; flex-wrap:wrap; margin-top:14px; }
   .hb    { font-size:11.5px; padding:3.5px 9px; border-radius:5px; background:var(--track); color:var(--dim); }
   .hb.on { background:rgba(94,234,212,.14); color:var(--accent); }
   .hb.hot{ background:rgba(244,114,182,.16); color:var(--hot); }
@@ -151,16 +168,23 @@
   .tcombo{ font-size:12.5px; font-weight:600; color:var(--hot); }
 
   /* ---- orientation gauges + posture chips ---- */
-  .detail{ display:grid; grid-template-columns:auto 1fr; gap:18px; margin-top:11px;
-           padding-top:11px; border-top:1px solid var(--line); }
+  .inner { background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+           border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line));
+           border-radius: 13px; padding: 12px 14px 13px;
+           display: flex; flex-direction: column; }
+  .inner > .posts, .inner > .gauges { flex: 1; align-items: center; }
+  .ilabel{ font-size:10px; letter-spacing:.11em; text-transform:uppercase;
+           color:var(--dim); margin-bottom:10px; }
+  .detail{ display:grid; grid-template-columns:auto 1fr; gap:14px; margin-top:auto;
+           padding-top:16px; }
   .gauges{ display:flex; gap:13px; align-items:stretch; }
   .gcol{ display:flex; flex-direction:column; align-items:center; gap:3px; }
   /* fixed-height body so all three gauges line up regardless of their shape */
   .gbody{ height:46px; display:flex; align-items:center; justify-content:center; }
   .glabel{ font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); }
   .gval{ font-size:11.5px; color:var(--text); font-variant-numeric:tabular-nums; }
-  .ybar{ width:70px; height:5px; background:var(--track); border-radius:3px; position:relative; }
-  .pbar{ width:5px; height:42px; background:var(--track); border-radius:3px; position:relative; }
+  .ybar{ width:70px; height:6px; background:var(--gtrack); border-radius:3px; position:relative; }
+  .pbar{ width:6px; height:42px; background:var(--gtrack); border-radius:3px; position:relative; }
   .knob{ position:absolute; width:9px; height:9px; border-radius:50%; background:var(--accent);
          box-shadow:0 0 6px var(--accent); }
   .ybar .knob{ top:-2px; transform:translateX(-50%); }
@@ -499,8 +523,8 @@ function gauges(h){
       <span class="gval">${Math.round(pit)}°</span></div>
     <div class="gcol"><span class="glabel">roll</span>
       <div class="gbody"><svg width="50" height="34" viewBox="0 0 50 34">
-        <path d="M 7 28 A 18 18 0 0 1 43 28" fill="none" stroke="var(--track)"
-              stroke-width="5" stroke-linecap="round"/>
+        <path d="M 7 28 A 18 18 0 0 1 43 28" fill="none" stroke="var(--gtrack)"
+              stroke-width="5.5" stroke-linecap="round"/>
         <circle cx="${25+Math.sin(a)*18}" cy="${28-Math.cos(a)*18}" r="4.5" fill="var(--accent)"/>
         <line x1="25" y1="28" x2="${25+Math.sin(a)*13}" y2="${28-Math.cos(a)*13}"
               stroke="var(--accent)" stroke-width="2" opacity=".55"/>
@@ -519,6 +543,26 @@ function postures(h){
     <div class="hitrow"><span class="hit" id="hit-${h._id}"></span>wrist flick</div>
   </div>`;
 }
+
+// Both gloves have two flex sensors, so both report them. A channel reads
+// "—" until it has swung far enough to calibrate, and null means the
+// firmware is not sending that channel at all — an older build sends one.
+function flexBadges(h){
+  const one = (v, n) => v == null ? [`flex${n} —`, ""] : [`flex${n} ok`, "on"];
+  return [one(h.flex, 1), one(h.flex2, 2)];
+}
+
+
+// Drawn marks instead of emoji: they take currentColor, so they turn teal
+// with an active hand and pink when frozen, which emoji cannot do.
+const ICON_LIVE = `<svg class="hicon" width="17" height="17" viewBox="0 0 24 24"
+  fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+  stroke-linejoin="round"><path d="M3 12h3l2.5-7 4 14 3-9 2 2h3.5"/></svg>`;
+const ICON_LOOP = `<svg class="hicon" width="17" height="17" viewBox="0 0 24 24"
+  fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+  stroke-linejoin="round"><path d="M3.5 9.5a8.5 8.5 0 0 1 14.6-3.3L21 9"/>
+  <path d="M21 4.2V9h-4.8"/><path d="M20.5 14.5a8.5 8.5 0 0 1-14.6 3.3L3 15"/>
+  <path d="M3 19.8V15h4.8"/></svg>`;
 
 const POSTURE_LABEL = {fist:"FIST", open:"OPEN HAND", point:"POINT"};
 function row(label, frac, val){
@@ -546,12 +590,15 @@ function drawHand(el, h, opts){
         ${(h.linked ? opts.rows(h) : opts.rows(h).map(r=>[r[0],0,"—"]))
             .map(r=>row(r[0],r[1],r[2])).join("")}
       </div></div>
-    <div class="detail">${gauges(h)}${postures(h)}</div>
+    <div class="detail">
+      <div class="inner"><div class="ilabel">Orientation</div>${gauges(h)}</div>
+      <div class="inner"><div class="ilabel">Hand status</div>${postures(h)}</div>
+    </div>
     <div class="hbadges">${(h.linked ? opts.badges(h) : [["no link",""]])
         .map(b=>`<span class="hb ${b[1]||""}">${b[0]}</span>`).join("")}</div>`;
 }
 const LIVE_OPTS = {
-  title:"🎹 Live hand", mirror:false,
+  title:ICON_LIVE + "<span>Live hand</span>", mirror:false,
   big: h => !h.linked ? "searching" : (POSTURE_LABEL[h.posture] || h.note || "—"),
   sub: h => !h.linked ? "no glove" :
             `${h.scene} · scene ${h.scene_n}/${h.scene_total}${h.gate?"":" · muted"}`,
@@ -559,12 +606,10 @@ const LIVE_OPTS = {
               ["bright", h.bright||0, h.cutoff?Math.round(h.cutoff)+"Hz":"—"],
               ["volume", h.volume||0, Math.round((h.volume||0)*100)+"%"],
               ["vibrato", h.vibrato||0, Math.round((h.vibrato||0)*100)+"%"]],
-  badges: h => [[h.gate?"sound on":"muted", h.gate?"on":""],
-                [h.flex==null?"flex1 —":"flex1 ok", h.flex==null?"":"on"],
-                [h.flex2==null?"flex2 —":"flex2 ok", h.flex2==null?"":"on"]],
+  badges: h => [[h.gate?"sound on":"muted", h.gate?"on":""], ...flexBadges(h)],
 };
 const LOOP_OPTS = {
-  title:"🔁 Loop hand", mirror:true,
+  title:ICON_LOOP + "<span>Loop hand</span>", mirror:true,
   big: h => !h.linked ? "searching" : h.frozen ? "FROZEN"
             : (POSTURE_LABEL[h.posture] || (h.mode==="granular" ? "SCRUBBING" : "LOOP")),
   sub: h => !h.linked ? "no glove"
@@ -574,7 +619,8 @@ const LOOP_OPTS = {
               ["reverb", h.reverb||0, Math.round((h.reverb||0)*100)+"%"],
               ["blend", h.blend||0, Math.round((h.blend||0)*100)+"%"]],
   badges: h => [[h.preset, "on"], [h.mode, h.mode!=="normal"?"on":""],
-                ...(h.delay?[["delay","on"]]:[]), ...(h.frozen?[["FROZEN","hot"]]:[])],
+                ...(h.delay?[["delay","on"]]:[]), ...(h.frozen?[["FROZEN","hot"]]:[]),
+                ...flexBadges(h)],
 };
 function flash(id){
   const el = document.querySelector("#"+id+" .hflash");
