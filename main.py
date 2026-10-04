@@ -171,10 +171,20 @@ def _hand_state(frame, src, posture, extra, st=None) -> dict:
     """One glove's row in the panel. `src` is the BLE source when there is
     one, so the panel can tell 'no link' from 'linked but sensor stalled' —
     a distinction that cost a whole afternoon to make by hand."""
-    linked = True if src is None else bool(getattr(src, "connected", False))
+    # Three states, not two. With no BLE source this hand is being driven by
+    # the keyboard or browser — that is not a glove link, and calling it one
+    # made the panel claim "linked" with nothing plugged in at all.
+    if src is None:
+        link = "simulated"
+    elif getattr(src, "connected", False):
+        link = "glove"
+    else:
+        link = "searching"
+    linked = link != "searching"
     pend, pend_frac = _pending(st, frame.t) if st else (None, 0.0)
     state = {
         "linked": linked,
+        "link": link,
         "pending": pend,
         "pending_frac": pend_frac,
         "stalled": bool(getattr(src, "stalled", False)) if src else False,

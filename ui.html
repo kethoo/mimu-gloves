@@ -144,6 +144,7 @@
   .ldot.ok  { background:var(--accent); box-shadow:0 0 7px var(--accent); }
   .ldot.warn{ background:var(--warn); box-shadow:0 0 7px var(--warn); }
   .ldot.bad { background:var(--bad); }
+  .ldot.sim { background:var(--dim); }
   .hstage{ display:flex; gap:20px; align-items:center; flex:1; }
   .hrows { flex:1; display:flex; flex-direction:column; gap:11px; min-width:0; }
   .hbig  { font-size:26px; font-weight:600; }
@@ -235,7 +236,7 @@
   <circle cx="17.5" cy="20" r="2.5" fill="var(--bg)"/>
 </svg><span>MIMU GLOVES</span></h1>
   <span class="hdr-right">
-    <span id="conn" class="bad">connecting…</span>
+    <span id="conn" class="bad">UI connecting…</span>
     <span class="hdr-sep"></span>
     <button id="theme" title="Light / dark" aria-label="Toggle light and dark"></button>
   </span>
@@ -344,7 +345,7 @@ const conn = document.getElementById("conn");
 
 function connect() {
   ws = new WebSocket("ws://127.0.0.1:8765");
-  ws.onopen = () => { connected = true; conn.textContent = "connected"; conn.className = "ok"; };
+  ws.onopen = () => { connected = true; conn.textContent = "UI connected"; conn.className = "ok"; };
   ws.onclose = () => {
     connected = false; conn.textContent = "reconnecting…"; conn.className = "bad";
     setTimeout(connect, 1000);
@@ -575,9 +576,10 @@ function row(label, frac, val){
   </div><span class="hval">${val}</span></div>`;
 }
 function linkLine(h){
-  if (!h.linked) return '<span class="ldot bad"></span>searching';
+  if (h.link === "searching") return '<span class="ldot bad"></span>no glove';
+  if (h.link === "simulated") return '<span class="ldot sim"></span>simulated';
   if (h.stalled) return '<span class="ldot warn"></span>sensor stalled';
-  return '<span class="ldot ok"></span>linked';
+  return '<span class="ldot ok"></span>glove linked';
 }
 function drawHand(el, h, opts){
   const froz = !!h.frozen, act = !!h.posture;
