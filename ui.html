@@ -172,7 +172,8 @@
            border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line));
            border-radius: 13px; padding: 12px 14px 13px;
            display: flex; flex-direction: column; }
-  .inner > .posts, .inner > .gauges { flex: 1; align-items: center; }
+  .inner > .gauges { flex: 1; align-items: center; }
+  .inner > .posts { flex: 1; }
   .ilabel{ font-size:10px; letter-spacing:.11em; text-transform:uppercase;
            color:var(--dim); margin-bottom:10px; }
   .detail{ display:grid; grid-template-columns:auto 1fr; gap:14px; margin-top:auto;
@@ -189,15 +190,15 @@
          box-shadow:0 0 6px var(--accent); }
   .ybar .knob{ top:-2px; transform:translateX(-50%); }
   .pbar .knob{ left:-2px; transform:translateY(-50%); }
-  .posts{ display:flex; flex-wrap:wrap; gap:7px; align-items:center;
-          align-content:center; }
-  .chip{ position:relative; font-size:12px; padding:5px 13px; flex:none; border-radius:6px;
+  .posts{ display:flex; flex-direction:column; gap:10px; justify-content:center; }
+  .chiprow{ display:flex; gap:8px; }
+  .chip{ position:relative; font-size:12px; padding:6px 13px; flex:1; text-align:center; border-radius:6px;
          background:var(--track); color:var(--dim); overflow:hidden; white-space:nowrap; }
   .chip .arm{ position:absolute; inset:0; background:rgba(94,234,212,.3); width:0; }
   .chip.on{ background:rgba(94,234,212,.18); color:var(--accent); }
   .chip span{ position:relative; }
   .hitrow{ display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--dim); }
-  .hit{ width:9px; height:9px; border-radius:50%; background:var(--track); }
+  .hit{ width:9px; height:9px; border-radius:50%; background:var(--gtrack); }
   .hit.go{ background:var(--hot); box-shadow:0 0 9px var(--hot); }
 
   /* ---- collapsible controls ---- */
@@ -534,12 +535,13 @@ function gauges(h){
 }
 function postures(h){
   const list=[["fist","Fist"],["open","Open hand"],["point","Point"]];
-  return `<div class="posts">${list.map(([k,label])=>{
-    const on = h.posture===k;
-    const arming = (!on && h.pending===k) ? (h.pending_frac||0) : 0;
-    return `<div class="chip ${on?"on":""}">
-      <div class="arm" style="width:${Math.round(arming*100)}%"></div>
-      <span>${label}</span></div>`;}).join("")}
+  return `<div class="posts">
+    <div class="chiprow">${list.map(([k,label])=>{
+      const on = h.posture===k;
+      const arming = (!on && h.pending===k) ? (h.pending_frac||0) : 0;
+      return `<div class="chip ${on?"on":""}">
+        <div class="arm" style="width:${Math.round(arming*100)}%"></div>
+        <span>${label}</span></div>`;}).join("")}</div>
     <div class="hitrow"><span class="hit" id="hit-${h._id}"></span>wrist flick</div>
   </div>`;
 }
