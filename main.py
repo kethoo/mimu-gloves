@@ -398,6 +398,17 @@ def main() -> None:
             if voice_source is not None:
                 events += voice_source.drain_events()
             for event in events:
+                if event.endswith("recalibrate"):
+                    # Only a real glove has flex calibration to reset; from
+                    # the keyboard or the browser the bend is already a
+                    # 0..1 value and there is nothing to relearn.
+                    tgt = voice_source if event.startswith("V:") else glove_src
+                    reset = getattr(tgt, "recalibrate_flex", None)
+                    if reset is not None:
+                        reset()
+                        print("\n[flex calibration reset - bend each finger "
+                              "fully once to relearn its range]")
+                    continue
                 # "V:" marks the voice hand; anything else is the instrument.
                 if event.startswith("V:"):
                     loop_mapping.handle_event(event[2:], synth, voice)

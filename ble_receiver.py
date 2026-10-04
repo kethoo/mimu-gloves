@@ -71,6 +71,16 @@ FLEX_SWAP = False
 # its range for the rest of the session.
 FLEX_VALID_MIN = 800.0
 
+# The learned range relaxes inward a little every sample, so a stale extreme
+# fades instead of defining the channel forever. Without it, one bad reading
+# that scrapes past FLEX_VALID_MIN permanently squashes real movement into a
+# fraction of the scale: measured a span of 1140 on a finger that only moves
+# ~150 counts, leaving the mapped value stuck between 0.01 and 0.13.
+#
+# Sized so a wrong extreme washes out in about a minute, while ordinary
+# playing keeps re-widening the range faster than it shrinks.
+FLEX_RELAX = 4.0e-4
+
 
 def _wrap(deg: float) -> float:
     return (deg + 180.0) % 360.0 - 180.0
@@ -167,6 +177,14 @@ class _FlexChannel:
         None, so this is what to watch while bending a finger."""
         return 0.0 if self.hi < self.lo else self.hi - self.lo
 
+    def recalibrate(self) -> None:
+        """Forget the learned range and start again. The fastest cure when a
+        channel has latched onto a bad extreme."""
+        self.lo = float("inf")
+        self.hi = float("-inf")
+        self.ready = False
+        print(f"\n[{self.name}: recalibrating — bend the finger fully a few times]")
+
     def update(self, raw):
         if raw is None:
             return None
@@ -175,12 +193,29 @@ class _FlexChannel:
             # calibration or flapping the mapped output to zero.
             self.dropouts += 1
             return self.last
+        if self.ready:
+            # Once the range is known, a sample a whole span outside it is a
+            # dropout too — a finger does not suddenly travel twice as far as
+            # it ever has. This is the guard FLEX_VALID_MIN cannot provide,
+            # because a plausible-looking value can still be nonsense for
+            # THIS sensor.
+            span = self.hi - self.lo
+            if raw < self.lo - span or raw > self.hi + span:
+                self.dropouts += 1
+                return self.last
         self.lo = min(self.lo, raw)
         self.hi = max(self.hi, raw)
         span = self.hi - self.lo
+        # Relax the ends inward; a real bend re-widens them immediately.
+        if span > FLEX_MIN_SPAN:
+            self.lo += span * FLEX_RELAX
+            self.hi -= span * FLEX_RELAX
+            span = self.hi - self.lo
         if span < FLEX_MIN_SPAN:
             return None
-        u = (raw - self.lo) / span
+        # Clamped because the relax above can leave the live sample just
+        # outside the ends, and the postures want a true 0..1.
+        u = min(max((raw - self.lo) / span, 0.0), 1.0)
         if not self.ready:
             self.ready = True
             print(f"\n[{self.name} detected — range {self.lo:.0f}..{self.hi:.0f}]")
@@ -234,6 +269,11 @@ class BleGloveSource(GloveSource):
         self._audio_expected = 0
         self._audio_rate = 16000
         self._audio_parts: list[bytes] = []
+
+    def recalibrate_flex(self) -> None:
+        """Reset both flex channels on this glove."""
+        self._flex.recalibrate()
+        self._flex2.recalibrate()
 
     @property
     def stalled(self) -> bool:

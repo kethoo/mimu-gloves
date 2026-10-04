@@ -282,9 +282,10 @@
       Index straight + middle bent = 🤚 next instrument. Hold a posture for
       ~0.35 s: that delay is what stops a volume swell firing them by accident.
     </div>
-    <div class="btnrow" style="grid-template-columns:1fr 1fr">
+    <div class="btnrow">
       <button id="reset">reset hand (r)</button>
       <button data-ev="scene">🎬 next scene (n)</button>
+      <button data-ev="recalibrate">↻ recalibrate flex (c)</button>
     </div>
   </div>
 
@@ -317,6 +318,7 @@
       <div class="hint">
         Drag the pad = roll (brightness) and tilt (pitch).
         <kbd>space</kbd> wrist flick, <kbd>n</kbd> next scene,
+        <kbd>c</kbd> recalibrate flex,
         <kbd>v</kbd> record, <kbd>o</kbd> overdub, <kbd>p</kbd> loop,
         <kbd>g</kbd> granular, <kbd>b</kbd> slices, <kbd>m</kbd> drone,
         <kbd>l</kbd> live voice, <kbd>1</kbd>–<kbd>7</kbd> instruments,
@@ -426,7 +428,7 @@ document.querySelectorAll("[data-ev]").forEach((b) => (b.onclick = () => sendEve
 document.querySelectorAll("[data-ins]").forEach((b) => (b.onclick = () => sendEvent("instrument:" + b.dataset.ins)));
 document.getElementById("punch").onclick = () => sendEvent("punch");
 
-const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene" };
+const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene", c: "recalibrate" };
 const INS = ["saw", "organ", "strings", "bell", "flute", "pluck", "guitar"];
 document.addEventListener("keydown", (e) => {
   if (e.repeat) return;

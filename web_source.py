@@ -20,7 +20,7 @@ PORT = 8765
 
 ALLOWED_EVENTS = {
     "punch", "record", "overdub", "loop", "granular", "slices", "mute", "live",
-    "scene",
+    "scene", "recalibrate",
 }
 
 
