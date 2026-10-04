@@ -79,7 +79,7 @@ Everything about time and space. This hand never plays a note.
 
 | Gesture | Effect | Why it earns a slot |
 | --- | --- | --- |
-| Relative roll (live − loop) | Stereo width | The only thing two IMUs give that one cannot |
+| Relative roll (live − loop) | Stereo width — level is normal, twisting widens or narrows | The only thing two IMUs give that one cannot |
 | Both fists | Total freeze | A big moment no continuous axis can express |
 | Both open hands | Panic mute | The gesture you want when something feeds back |
 

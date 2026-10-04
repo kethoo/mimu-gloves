@@ -106,16 +106,22 @@ def _resolve_device(spec: str | None, want_output: bool):
 # Combination gestures. These live here because they are the only things
 # that need BOTH hands at once — neither mapping module can see the other's
 # frame, and neither should.
-WIDTH_RANGE = 60.0     # degrees of roll difference for the full sweep
+WIDTH_RANGE = 60.0     # degrees of roll difference for the full sweep,
+                       # measured from level in either direction
 _combo_state = {"both_fist": False, "both_open": False}
 
 
 def combo(live, loop, synth) -> None:
     """What the two hands do together, as opposed to each on its own."""
     # Relative roll -> stereo width. The one thing two IMUs give that one
-    # cannot: palms aligned collapses toward mono, opposed widens it.
-    spread = abs(live.roll - loop.roll)
-    synth.target_width = min(spread / WIDTH_RANGE, 1.0) * 1.6
+    # cannot. Signed, and centred on normal: hands level is ordinary stereo,
+    # twisting one way widens and the other collapses toward mono.
+    #
+    # It used to be the unsigned difference scaled from zero, which meant a
+    # resting pose — both hands level, the most common position there is —
+    # played the whole instrument in mono.
+    d = max(-1.0, min(1.0, (live.roll - loop.roll) / WIDTH_RANGE))
+    synth.target_width = 1.0 + d * 0.85
 
     # Both hands in the same posture at once: deliberate, unmistakable, and
     # impossible to hit by accident while playing. Edge-triggered so holding

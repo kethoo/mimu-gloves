@@ -115,7 +115,7 @@ holding both hands' absolute angles steady while varying the difference.
 
 | Gesture | Effect |
 | --- | --- |
-| **Relative roll** — rotate the hands oppositely | Stereo width. Aligned collapses toward mono, opposed widens |
+| **Relative roll** — twist the hands oppositely | Stereo width. Hands level is normal stereo; twisting one way widens, the other collapses toward mono |
 | ✊✊ **Both fists** | Total freeze — everything holds |
 | 🖐️🖐️ **Both hands open** | Silence. The gesture for when something feeds back |
 

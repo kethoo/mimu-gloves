@@ -643,11 +643,13 @@ function renderPanel(s){
   const t = $("tog");
   t.className = "tog" + (s.combo ? " on" : "");
   const wv = s.width == null ? 1 : s.width;
-  const w = Math.max(0, Math.min(1, wv/1.6));
+  const w = Math.max(0, Math.min(1, wv/1.85));
+  const wlabel = wv < 0.45 ? "mono" : wv < 0.85 ? "narrow"
+               : wv < 1.2 ? "normal" : "wide";
   t.innerHTML = `<span class="tlab">Together</span>
     <span>stereo width</span>
     <div class="hbar" style="flex:1;max-width:200px"><div class="hfill" style="width:${w*100}%"></div></div>
-    <span class="hval">${wv.toFixed(2)}</span>
+    <span class="hval">${wv.toFixed(2)}</span><span>${wlabel}</span>
     ${s.combo ? `<span class="tcombo">${s.combo==="both fists"?"✊✊ BOTH FISTS — held":"🖐️🖐️ BOTH OPEN — silence"}</span>` : "<span>—</span>"}`;
 }
 

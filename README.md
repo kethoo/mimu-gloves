@@ -222,7 +222,7 @@ This hand never plays a note.
 
 | Gesture | Effect |
 | --- | --- |
-| Relative roll | Stereo width — the one thing two IMUs give that one cannot |
+| Relative roll | Stereo width: hands level is normal stereo, twisting widens or narrows — the one thing two IMUs give that one cannot |
 | Both fists | Total freeze |
 | Both hands open | Silence |
 
