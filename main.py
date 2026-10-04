@@ -151,13 +151,26 @@ def _note_name(hz: float) -> str:
     return f"{NOTE_NAMES[n % 12]}{n // 12 - 1}"
 
 
-def _hand_state(frame, src, posture, extra) -> dict:
+def _pending(st, now):
+    """Which posture is being held, and how far toward firing. Glover's panel
+    just lights a posture once it commits; showing the dwell filling means you
+    can see a gesture arming and correct before it triggers."""
+    if not st.pending:
+        return None, 0.0
+    hold = mapping.POSTURE_HOLD.get(st.pending, 0.35)
+    return st.pending, min((now - st.pending_since) / hold, 1.0)
+
+
+def _hand_state(frame, src, posture, extra, st=None) -> dict:
     """One glove's row in the panel. `src` is the BLE source when there is
     one, so the panel can tell 'no link' from 'linked but sensor stalled' —
     a distinction that cost a whole afternoon to make by hand."""
     linked = True if src is None else bool(getattr(src, "connected", False))
+    pend, pend_frac = _pending(st, frame.t) if st else (None, 0.0)
     state = {
         "linked": linked,
+        "pending": pend,
+        "pending_frac": pend_frac,
         "stalled": bool(getattr(src, "stalled", False)) if src else False,
         "roll": frame.roll, "pitch": frame.pitch, "yaw": frame.yaw,
         "motion": frame.motion,
@@ -386,7 +399,7 @@ def main() -> None:
                     "hardware": "--ble" in sys.argv,
                     # ---- the two-hand panel -------------------------------
                     "two_hands": two_hands,
-                    "live_hand": _hand_state(frame, glove_src, live_p, {
+                    "live_hand": _hand_state(frame, glove_src, live_p, st=hand, extra={
                         "note": _note_name(synth.target_freq),
                         # Where the note sits in the scene's scale, so the
                         # bar tracks the hand rather than sitting at half.
@@ -403,7 +416,7 @@ def main() -> None:
                         "scene_total": len(mapping.SCENES),
                         "gate": synth.drone_on,
                     }),
-                    "loop_hand": _hand_state(vframe or frame, voice_source, loop_p, {
+                    "loop_hand": _hand_state(vframe or frame, voice_source, loop_p, st=voice, extra={
                         "scrub": synth.target_scrub,
                         "speed": synth.target_rate,
                         "reverb": synth.target_voice_reverb,

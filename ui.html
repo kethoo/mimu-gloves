@@ -111,6 +111,31 @@
   .tog.on{ border-color:var(--hot); }
   .tlab  { font-size:11px; letter-spacing:.07em; text-transform:uppercase; flex:none; }
   .tcombo{ font-size:12.5px; font-weight:600; color:var(--hot); }
+
+  /* ---- orientation gauges + posture chips ---- */
+  .detail{ display:grid; grid-template-columns:auto 1fr; gap:13px; margin-top:11px;
+           padding-top:11px; border-top:1px solid var(--line); }
+  .gauges{ display:flex; gap:13px; align-items:stretch; }
+  .gcol{ display:flex; flex-direction:column; align-items:center; gap:3px; }
+  /* fixed-height body so all three gauges line up regardless of their shape */
+  .gbody{ height:46px; display:flex; align-items:center; justify-content:center; }
+  .glabel{ font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); }
+  .gval{ font-size:10.5px; color:var(--text); font-variant-numeric:tabular-nums; }
+  .ybar{ width:70px; height:5px; background:#272b38; border-radius:3px; position:relative; }
+  .pbar{ width:5px; height:42px; background:#272b38; border-radius:3px; position:relative; }
+  .knob{ position:absolute; width:9px; height:9px; border-radius:50%; background:var(--accent);
+         box-shadow:0 0 6px var(--accent); }
+  .ybar .knob{ top:-2px; transform:translateX(-50%); }
+  .pbar .knob{ left:-2px; transform:translateY(-50%); }
+  .posts{ display:flex; flex-direction:column; gap:4px; justify-content:center; }
+  .chip{ position:relative; font-size:10.5px; padding:3px 9px; border-radius:6px;
+         background:#272b38; color:var(--dim); overflow:hidden; white-space:nowrap; }
+  .chip .arm{ position:absolute; inset:0; background:rgba(94,234,212,.3); width:0; }
+  .chip.on{ background:rgba(94,234,212,.18); color:var(--accent); }
+  .chip span{ position:relative; }
+  .hitrow{ display:flex; align-items:center; gap:6px; font-size:10.5px; color:var(--dim); }
+  .hit{ width:9px; height:9px; border-radius:50%; background:#272b38; }
+  .hit.go{ background:var(--hot); box-shadow:0 0 9px var(--hot); }
 </style>
 </head>
 <body>
@@ -337,6 +362,46 @@ function handSVG(h, mirror, colour){
       <circle cx="54" cy="${76-tilt}" r="5" fill="${h.linked?colour:"#2a2e3a"}"/>
     </g></g></svg>`;
 }
+
+// ---- orientation gauges, after Glover's detail view ---------------------
+function gauges(h){
+  const cl=(v,m)=>Math.max(-m,Math.min(m,v||0));
+  const yaw=cl(h.yaw,45), pit=cl(h.pitch,45), rol=cl(h.roll,45);
+  // Roll as a dial: a 180-degree arc with a marker, which reads faster than
+  // a number when your hand is moving.
+  const a=(rol/45)*Math.PI*0.45;
+  return `<div class="gauges">
+    <div class="gcol"><span class="glabel">yaw</span>
+      <div class="gbody"><div class="ybar">
+        <div class="knob" style="left:${((yaw+45)/90)*100}%"></div></div></div>
+      <span class="gval">${Math.round(yaw)}°</span></div>
+    <div class="gcol"><span class="glabel">tilt</span>
+      <div class="gbody"><div class="pbar">
+        <div class="knob" style="top:${((45-pit)/90)*100}%"></div></div></div>
+      <span class="gval">${Math.round(pit)}°</span></div>
+    <div class="gcol"><span class="glabel">roll</span>
+      <div class="gbody"><svg width="50" height="34" viewBox="0 0 50 34">
+        <path d="M 7 28 A 18 18 0 0 1 43 28" fill="none" stroke="#272b38"
+              stroke-width="5" stroke-linecap="round"/>
+        <circle cx="${25+Math.sin(a)*18}" cy="${28-Math.cos(a)*18}" r="4.5" fill="#5eead4"/>
+        <line x1="25" y1="28" x2="${25+Math.sin(a)*13}" y2="${28-Math.cos(a)*13}"
+              stroke="#5eead4" stroke-width="2" opacity=".55"/>
+      </svg></div>
+      <span class="gval">${Math.round(rol)}°</span></div>
+  </div>`;
+}
+function postures(h){
+  const list=[["fist","Fist"],["open","Open hand"],["point","Point"]];
+  return `<div class="posts">${list.map(([k,label])=>{
+    const on = h.posture===k;
+    const arming = (!on && h.pending===k) ? (h.pending_frac||0) : 0;
+    return `<div class="chip ${on?"on":""}">
+      <div class="arm" style="width:${Math.round(arming*100)}%"></div>
+      <span>${label}</span></div>`;}).join("")}
+    <div class="hitrow"><span class="hit" id="hit-${h._id}"></span>wrist flick</div>
+  </div>`;
+}
+
 const POSTURE_LABEL = {fist:"FIST", open:"OPEN HAND", point:"POINT"};
 function row(label, frac, val){
   return `<div class="hrow"><span>${label}</span><div class="hbar">
@@ -362,6 +427,7 @@ function drawHand(el, h, opts){
         ${(h.linked ? opts.rows(h) : opts.rows(h).map(r=>[r[0],0,"—"]))
             .map(r=>row(r[0],r[1],r[2])).join("")}
       </div></div>
+    <div class="detail">${gauges(h)}${postures(h)}</div>
     <div class="hbadges">${(h.linked ? opts.badges(h) : [["no link",""]])
         .map(b=>`<span class="hb ${b[1]||""}">${b[0]}</span>`).join("")}</div>`;
 }
@@ -401,6 +467,7 @@ function renderPanel(s){
   const show = !!s.two_hands || !!s.live_hand;
   $("hands").hidden = !show; $("tog").hidden = !show;
   if (!show) return;
+  s.live_hand._id = "live"; s.loop_hand._id = "loop";
   drawHand($("c-live"), s.live_hand, LIVE_OPTS);
   drawHand($("c-loop"), s.loop_hand, LOOP_OPTS);
   const t = $("tog");
