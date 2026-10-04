@@ -261,6 +261,11 @@ def main() -> None:
         else:
             glove = BleGloveSource(live_name, label="glove")
             print(f"Connecting to '{live_name}' over BLE...")
+            # Without this the loop hand silently falls back to the browser
+            # and the panel just says "simulated", which reads as a fault
+            # rather than as a flag nobody passed.
+            print("Loop hand: simulated (browser). Add --voice-glove to use "
+                  "the second board.")
         if "--web" in sys.argv:
             # Glove drives the hand; the browser supplies the buttons the
             # hardware doesn't have yet (instruments, record, modes).

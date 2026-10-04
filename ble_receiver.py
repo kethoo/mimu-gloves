@@ -107,10 +107,17 @@ class _Discovery:
 
     def _take(self, name: str):
         """Exact match first, then prefix — so 'MIMU-GLOVE' still finds a
-        glove running the older un-suffixed firmware."""
+        glove running the older un-suffixed firmware.
+
+        Prefix matches are sorted, which matters once both boards are
+        powered: 'MIMU-GLOVE' matches -I and -V alike, and iterating the
+        scan results raw meant single-glove mode attached to whichever one
+        the dict happened to list first. Sorted, the bare prefix lands on
+        the instrument hand every time, which is the one that mode means.
+        """
         if name in self._seen:
             return self._seen.pop(name)
-        for found in list(self._seen):
+        for found in sorted(self._seen):
             if found.startswith(name):
                 return self._seen.pop(found)
         return None
