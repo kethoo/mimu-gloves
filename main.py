@@ -31,6 +31,7 @@ not a replacement, so you can A/B the two.
 
 from __future__ import annotations
 
+import math
 import pathlib
 import sys
 import time
@@ -136,6 +137,35 @@ def combo(live, loop, synth) -> None:
         synth.set_freeze(False)
         print("\n[BOTH HANDS OPEN — silence]")
     _combo_state["both_open"] = both_open
+
+
+NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+
+
+def _note_name(hz: float) -> str:
+    """Frequency back to a note name for the panel. mapping.py built it from
+    a MIDI number, so this round-trips exactly for every note in a scale."""
+    if hz <= 0:
+        return "—"
+    n = int(round(69 + 12 * math.log2(hz / 440.0)))
+    return f"{NOTE_NAMES[n % 12]}{n // 12 - 1}"
+
+
+def _hand_state(frame, src, posture, extra) -> dict:
+    """One glove's row in the panel. `src` is the BLE source when there is
+    one, so the panel can tell 'no link' from 'linked but sensor stalled' —
+    a distinction that cost a whole afternoon to make by hand."""
+    linked = True if src is None else bool(getattr(src, "connected", False))
+    state = {
+        "linked": linked,
+        "stalled": bool(getattr(src, "stalled", False)) if src else False,
+        "roll": frame.roll, "pitch": frame.pitch, "yaw": frame.yaw,
+        "motion": frame.motion,
+        "flex": frame.flex, "flex2": frame.flex2,
+        "posture": posture,
+    }
+    state.update(extra)
+    return state
 
 
 def scan() -> None:
@@ -251,6 +281,8 @@ def main() -> None:
             "Tip: python main.py --web gives you a visual frontend instead.\n"
         )
 
+    glove_src = glove if "--ble" in sys.argv else None
+
     midi = None
     if "--midi" in sys.argv:
         from midi_out import MidiOut
@@ -337,6 +369,8 @@ def main() -> None:
                 synth.set_loop(*take)
             publish = getattr(source, "publish", None)
             if publish is not None:
+                live_p = hand.posture
+                loop_p = voice.posture
                 publish({
                     "roll": frame.roll, "pitch": frame.pitch,
                     "yaw": frame.yaw, "motion": frame.motion,
@@ -350,6 +384,43 @@ def main() -> None:
                     # Tells the UI the pose comes from the real glove, so it
                     # mirrors the hand instead of waiting to be dragged.
                     "hardware": "--ble" in sys.argv,
+                    # ---- the two-hand panel -------------------------------
+                    "two_hands": two_hands,
+                    "live_hand": _hand_state(frame, glove_src, live_p, {
+                        "note": _note_name(synth.target_freq),
+                        # Where the note sits in the scene's scale, so the
+                        # bar tracks the hand rather than sitting at half.
+                        "pitch_frac": hand.last_step / max(
+                            len(mapping.SCALES[mapping.SCENES[hand.scene][2]]) - 1, 1),
+                        "bright": min(max(
+                            (math.log(max(synth.target_cutoff, 200.0) / 200.0)
+                             / math.log(30.0)), 0.0), 1.0),
+                        "cutoff": synth.target_cutoff,
+                        "volume": min(synth.target_amp / 0.55, 1.0),
+                        "vibrato": synth.target_vibrato,
+                        "scene": mapping.SCENES[hand.scene][0],
+                        "scene_n": hand.scene + 1,
+                        "scene_total": len(mapping.SCENES),
+                        "gate": synth.drone_on,
+                    }),
+                    "loop_hand": _hand_state(vframe or frame, voice_source, loop_p, {
+                        "scrub": synth.target_scrub,
+                        "speed": synth.target_rate,
+                        "reverb": synth.target_voice_reverb,
+                        "blend": min(synth.target_voice_volume / 0.9, 1.0),
+                        "frozen": synth.freeze_on,
+                        "mode": ("granular" if synth.granular_on
+                                 else "slices" if synth.slices_on else "normal"),
+                        "preset": loop_mapping.PRESETS[voice.preset][0],
+                        "preset_n": voice.preset + 1,
+                        "preset_total": len(loop_mapping.PRESETS),
+                        "delay": synth.voice_delay_on,
+                        "loop_secs": synth.loop_seconds,
+                    }),
+                    "width": synth.target_width,
+                    "combo": ("both fists" if (live_p == "fist" and loop_p == "fist")
+                              else "both open" if (live_p == "open" and loop_p == "open")
+                              else None),
                 })
             if not isinstance(source, DemoGloveSource):
                 def _f(v):

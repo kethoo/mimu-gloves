@@ -225,10 +225,23 @@ class BleGloveSource(GloveSource):
         # Re-seeded on every reconnect too, so a glove that rebooted with a
         # higher press count does not fire a burst of scene changes.
         self._presses: int | None = None
+        # Surfaced to the UI panel: is the link up, and is the sensor sending
+        # fresh data or repeating itself?
+        self.connected = False
         # Audio arriving from the glove's own microphone.
         self._audio_expected = 0
         self._audio_rate = 16000
         self._audio_parts: list[bytes] = []
+
+    @property
+    def stalled(self) -> bool:
+        """True while the orientation has not changed for FROZEN_WARN_S. The
+        link can be perfectly healthy while this is true — that distinction
+        is the whole point of showing it separately."""
+        return bool(
+            self._frozen_since
+            and time.monotonic() - self._frozen_since > FROZEN_WARN_S
+        )
 
     @property
     def flex_spans(self) -> tuple[float, float]:
@@ -281,9 +294,12 @@ class BleGloveSource(GloveSource):
                     )
                     await client.start_notify(CHAR_UUID, self._on_packet)
                     await client.start_notify(AUDIO_UUID, self._on_audio)
+                    self.connected = True
                     while self._running and client.is_connected:
                         await asyncio.sleep(0.2)
+                    self.connected = False
             except Exception as exc:  # dropped mid-transfer, adapter busy, ...
+                self.connected = False
                 print(f"\n[BLE connection lost: {exc}]")
             if self._running:
                 print("\n[glove disconnected — reconnecting...]")

@@ -72,6 +72,45 @@
   .hint { margin-top: 14px; font-size: 12.5px; color: var(--dim); }
   kbd { background: #232736; border: 1px solid var(--line); border-radius: 4px;
         padding: 0 5px; font-size: 11.5px; }
+
+  /* ---- two-hand panel ---- */
+  .hands { display:grid; grid-template-columns:1fr 1fr; gap:14px; width:100%; max-width:860px; }
+  @media (max-width:740px){ .hands{ grid-template-columns:1fr; } }
+  .hcard { background:var(--panel); border:1px solid var(--line); border-radius:14px;
+           padding:13px; position:relative; overflow:hidden; transition:border-color .15s; }
+  .hcard.act   { border-color:var(--accent); }
+  .hcard.froz  { border-color:var(--hot); }
+  .hcard.lost  { opacity:.55; }
+  .hhdr { display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
+  .hname{ font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
+  .hcard.act .hname{ color:var(--accent); } .hcard.froz .hname{ color:var(--hot); }
+  .hlink{ font-size:11px; color:var(--dim); display:flex; align-items:center; gap:5px; }
+  .ldot { width:7px; height:7px; border-radius:50%; background:#3f4454; }
+  .ldot.ok  { background:var(--accent); box-shadow:0 0 7px var(--accent); }
+  .ldot.warn{ background:#fbbf24; box-shadow:0 0 7px #fbbf24; }
+  .ldot.bad { background:#ef4444; }
+  .hstage{ display:flex; gap:11px; align-items:center; }
+  .hrows { flex:1; display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .hbig  { font-size:18px; font-weight:600; }
+  .hsub  { font-size:11px; color:var(--dim); margin-top:1px; }
+  .hrow  { display:grid; grid-template-columns:58px 1fr 44px; align-items:center;
+           gap:6px; font-size:11px; color:var(--dim); }
+  .hbar  { height:5px; background:#272b38; border-radius:3px; overflow:hidden; }
+  .hfill { height:100%; background:var(--accent); border-radius:3px; transition:width .08s linear; }
+  .hcard.froz .hfill{ background:var(--hot); }
+  .hval  { text-align:right; color:var(--text); font-variant-numeric:tabular-nums; }
+  .hbadges{ display:flex; gap:5px; flex-wrap:wrap; margin-top:10px; }
+  .hb    { font-size:10.5px; padding:2.5px 7px; border-radius:5px; background:#272b38; color:var(--dim); }
+  .hb.on { background:rgba(94,234,212,.14); color:var(--accent); }
+  .hb.hot{ background:rgba(244,114,182,.16); color:var(--hot); }
+  .hflash{ position:absolute; inset:0; background:var(--hot); opacity:0; pointer-events:none; }
+  .hflash.go{ opacity:.18; transition:opacity .35s; }
+  .tog   { width:100%; max-width:860px; margin-top:12px; background:var(--panel);
+           border:1px solid var(--line); border-radius:14px; padding:11px 14px;
+           display:flex; align-items:center; gap:14px; font-size:11.5px; color:var(--dim); }
+  .tog.on{ border-color:var(--hot); }
+  .tlab  { font-size:11px; letter-spacing:.07em; text-transform:uppercase; flex:none; }
+  .tcombo{ font-size:12.5px; font-weight:600; color:var(--hot); }
 </style>
 </head>
 <body>
@@ -79,6 +118,12 @@
   <h1>🧤 Glove Instrument</h1>
   <span id="conn" class="bad">connecting…</span>
 </header>
+
+<section class="hands" id="hands" hidden>
+  <div class="hcard" id="c-live"></div>
+  <div class="hcard" id="c-loop"></div>
+</section>
+<div class="tog" id="tog" hidden></div>
 
 <main>
   <div class="panel">
@@ -263,11 +308,118 @@ document.addEventListener("keydown", (e) => {
   else if (k === "r") setPose(0, 0, 0);
 });
 
+
+// ---- two-hand panel -----------------------------------------------------
+// The hand drawing IS the sensor data: fingers curl with the real flex
+// values, the hand rotates with roll, the palm dot leans with tilt. A glance
+// tells you whether a flex channel is reading at all, which is otherwise
+// buried in a scrolling status line.
+function handSVG(h, mirror, colour){
+  const W=108,H=124, KN=54;
+  const curl = v => { const t = Math.max(0, Math.min(1, v==null?0:v));
+                      return {len: 36-23*t, rot: t*70, t}; };
+  const idx=curl(h.flex), mid=curl(h.flex2);
+  const rest=curl(h.posture==="fist"?0.95:(h.posture==="open"?0.02:0.15));
+  const skin = h.linked ? "#4a5163" : "#363b49";
+  const f=(x,c,live)=>`<g transform="translate(${x},${KN})"><g transform="rotate(${-c.rot})">
+      <rect x="-6" y="${-c.len}" width="12" height="${c.len+8}" rx="6" fill="${live?colour:skin}"
+            opacity="${live?(0.45+0.55*c.t):1}"/></g></g>`;
+  const tilt = Math.max(-9, Math.min(9, (h.pitch||0)*0.2));
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    <g transform="translate(${W/2},${H*0.62}) rotate(${(mirror?-1:1)*(h.roll||0)*0.45}) translate(${-W/2},${-H*0.62})">
+    <g ${mirror?`transform="translate(${W},0) scale(-1,1)"`:""}>
+      ${f(28,rest,false)}${f(46,idx,true)}${f(64,mid,true)}${f(82,rest,false)}
+      <g transform="translate(23,82) rotate(${-34+rest.rot*0.45})">
+        <rect x="-6.5" y="-26" width="13" height="34" rx="6.5" fill="${skin}"/></g>
+      <rect x="21" y="50" width="66" height="50" rx="16" fill="${skin}"/>
+      <rect x="21" y="50" width="66" height="50" rx="16" fill="${colour}" opacity=".28"/>
+      <circle cx="54" cy="76" r="10" fill="#12141a" opacity=".35"/>
+      <circle cx="54" cy="${76-tilt}" r="5" fill="${h.linked?colour:"#2a2e3a"}"/>
+    </g></g></svg>`;
+}
+const POSTURE_LABEL = {fist:"FIST", open:"OPEN HAND", point:"POINT"};
+function row(label, frac, val){
+  return `<div class="hrow"><span>${label}</span><div class="hbar">
+    <div class="hfill" style="width:${Math.round(Math.max(0,Math.min(1,frac))*100)}%"></div>
+  </div><span class="hval">${val}</span></div>`;
+}
+function linkLine(h){
+  if (!h.linked) return '<span class="ldot bad"></span>searching';
+  if (h.stalled) return '<span class="ldot warn"></span>sensor stalled';
+  return '<span class="ldot ok"></span>linked';
+}
+function drawHand(el, h, opts){
+  const froz = !!h.frozen, act = !!h.posture;
+  el.className = "hcard" + (!h.linked ? " lost" : froz ? " froz" : act ? " act" : "");
+  const colour = !h.linked ? "#454a5a" : froz ? "#f472b6" : act ? "#5eead4" : "#767d92";
+  el.innerHTML = `<div class="hflash"></div>
+    <div class="hhdr"><span class="hname">${opts.title}</span>
+      <span class="hlink">${linkLine(h)}</span></div>
+    <div class="hstage">${handSVG(h, opts.mirror, colour)}
+      <div class="hrows">
+        <div><div class="hbig" style="color:${froz?"var(--hot)":act?"var(--accent)":"var(--text)"}">${opts.big(h)}</div>
+        <div class="hsub">${opts.sub(h)}</div></div>
+        ${(h.linked ? opts.rows(h) : opts.rows(h).map(r=>[r[0],0,"—"]))
+            .map(r=>row(r[0],r[1],r[2])).join("")}
+      </div></div>
+    <div class="hbadges">${(h.linked ? opts.badges(h) : [["no link",""]])
+        .map(b=>`<span class="hb ${b[1]||""}">${b[0]}</span>`).join("")}</div>`;
+}
+const LIVE_OPTS = {
+  title:"🎹 Live hand", mirror:false,
+  big: h => !h.linked ? "searching" : (POSTURE_LABEL[h.posture] || h.note || "—"),
+  sub: h => !h.linked ? "no glove" :
+            `${h.scene} · scene ${h.scene_n}/${h.scene_total}${h.gate?"":" · muted"}`,
+  rows: h => [["pitch", h.pitch_frac||0, h.note||"—"],
+              ["bright", h.bright||0, h.cutoff?Math.round(h.cutoff)+"Hz":"—"],
+              ["volume", h.volume||0, Math.round((h.volume||0)*100)+"%"],
+              ["vibrato", h.vibrato||0, Math.round((h.vibrato||0)*100)+"%"]],
+  badges: h => [[h.gate?"sound on":"muted", h.gate?"on":""],
+                [h.flex==null?"flex1 —":"flex1 ok", h.flex==null?"":"on"],
+                [h.flex2==null?"flex2 —":"flex2 ok", h.flex2==null?"":"on"]],
+};
+const LOOP_OPTS = {
+  title:"🔁 Loop hand", mirror:true,
+  big: h => !h.linked ? "searching" : h.frozen ? "FROZEN"
+            : (POSTURE_LABEL[h.posture] || (h.mode==="granular" ? "SCRUBBING" : "LOOP")),
+  sub: h => !h.linked ? "no glove"
+            : `${h.mode} · ${h.loop_secs>0?h.loop_secs.toFixed(1)+" s captured":"no recording yet"}`,
+  rows: h => [["scrub", h.scrub||0, Math.round((h.scrub||0)*100)+"%"],
+              ["speed", ((Math.log2(h.speed||1)+1)/2), (h.speed||1).toFixed(2)+"x"],
+              ["reverb", h.reverb||0, Math.round((h.reverb||0)*100)+"%"],
+              ["blend", h.blend||0, Math.round((h.blend||0)*100)+"%"]],
+  badges: h => [[h.preset, "on"], [h.mode, h.mode!=="normal"?"on":""],
+                ...(h.delay?[["delay","on"]]:[]), ...(h.frozen?[["FROZEN","hot"]]:[])],
+};
+function flash(id){
+  const el = document.querySelector("#"+id+" .hflash");
+  if (!el) return;
+  el.classList.add("go");
+  setTimeout(()=>el.classList.remove("go"), 360);
+}
+function renderPanel(s){
+  const show = !!s.two_hands || !!s.live_hand;
+  $("hands").hidden = !show; $("tog").hidden = !show;
+  if (!show) return;
+  drawHand($("c-live"), s.live_hand, LIVE_OPTS);
+  drawHand($("c-loop"), s.loop_hand, LOOP_OPTS);
+  const t = $("tog");
+  t.className = "tog" + (s.combo ? " on" : "");
+  const wv = s.width == null ? 1 : s.width;
+  const w = Math.max(0, Math.min(1, wv/1.6));
+  t.innerHTML = `<span class="tlab">Together</span>
+    <span>stereo width</span>
+    <div class="hbar" style="flex:1;max-width:200px"><div class="hfill" style="width:${w*100}%"></div></div>
+    <span class="hval">${wv.toFixed(2)}</span>
+    ${s.combo ? `<span class="tcombo">${s.combo==="both fists"?"✊✊ BOTH FISTS — held":"🖐️🖐️ BOTH OPEN — silence"}</span>` : "<span>—</span>"}`;
+}
+
 // ---- state from Python --------------------------------------------------
 const $ = (id) => document.getElementById(id);
 let padLabelled = false;
 function render(s) {
   if (!s || s.roll === undefined) return;
+  renderPanel(s);
   // Hardware glove connected: the pad mirrors the real hand (unless the
   // user is dragging it, which would fight the incoming data).
   if (s.hardware && !dragging) {
