@@ -243,12 +243,14 @@ def main() -> None:
         from ble_receiver import BleGloveSource, run_gloves
 
         two = "--voice-glove" in sys.argv
+        # Names are overridable so a board on older, un-suffixed firmware can
+        # still take a role without being reflashed — matching is by prefix,
+        # so "MIMU-GLOVE" finds it. Applies with one glove too: --live-name
+        # used to be accepted and silently ignored outside two-hand mode.
+        live_name = _flag_value("--live-name") or (
+            "MIMU-GLOVE-I" if two else BleGloveSource.__init__.__defaults__[0])
+        loop_name = _flag_value("--loop-name") or "MIMU-GLOVE-V"
         if two:
-            # Names are overridable so a board on older, un-suffixed
-            # firmware can still take a role without being reflashed —
-            # matching is by prefix, so "MIMU-GLOVE" finds it.
-            live_name = _flag_value("--live-name") or "MIMU-GLOVE-I"
-            loop_name = _flag_value("--loop-name") or "MIMU-GLOVE-V"
             glove = BleGloveSource(
                 live_name, label="live glove", managed=True
             )
@@ -257,8 +259,8 @@ def main() -> None:
             )
             print("Connecting to BOTH gloves over BLE...")
         else:
-            glove = BleGloveSource()
-            print("Connecting to ESP32 glove over BLE...")
+            glove = BleGloveSource(live_name, label="glove")
+            print(f"Connecting to '{live_name}' over BLE...")
         if "--web" in sys.argv:
             # Glove drives the hand; the browser supplies the buttons the
             # hardware doesn't have yet (instruments, record, modes).
