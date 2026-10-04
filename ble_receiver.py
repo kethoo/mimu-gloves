@@ -229,6 +229,7 @@ class BleGloveSource(GloveSource):
         # fresh data or repeating itself?
         self.connected = False
         self._warned_no_audio = False
+        self._warned_pktlen = False
         # Audio arriving from the glove's own microphone.
         self._audio_expected = 0
         self._audio_rate = 16000
@@ -375,6 +376,17 @@ class BleGloveSource(GloveSource):
             roll, pitch, yaw, lax, lay, laz = struct.unpack("<6f", data)
             status = 1.0
         else:
+            # Say so rather than dropping it. A silent return here looks
+            # exactly like a glove that connected and then sent nothing:
+            # no data, no calibration, no error, nothing to go on.
+            if not self._warned_pktlen:
+                self._warned_pktlen = True
+                print(
+                    f"\n[{self.label}: {len(data)}-byte packets, which this "
+                    "build does not recognise (expects 40/36/32/28/24). The "
+                    "link is fine; the firmware is a layout we cannot read. "
+                    "Reflash the glove.]"
+                )
             return
 
         if status < 0.5:
