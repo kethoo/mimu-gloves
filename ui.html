@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Glove Instrument</title>
+<title>MIMU Gloves</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root {
@@ -18,7 +18,10 @@
   }
   header { width: 100%; max-width: 860px; display: flex; align-items: baseline;
            justify-content: space-between; margin-bottom: 18px; }
-  h1 { font-size: 20px; font-weight: 600; }
+  h1 { font-size: 19px; font-weight: 650; letter-spacing: .09em;
+       display: flex; align-items: center; gap: 10px; }
+  .logo { color: var(--accent); flex: none;
+          filter: drop-shadow(0 0 9px rgba(94,234,212,.35)); }
   #conn { font-size: 13px; color: var(--dim); }
   #conn.ok::before  { content: "● "; color: var(--accent); }
   #conn.bad::before { content: "● "; color: #ef4444; }
@@ -136,11 +139,40 @@
   .hitrow{ display:flex; align-items:center; gap:6px; font-size:10.5px; color:var(--dim); }
   .hit{ width:9px; height:9px; border-radius:50%; background:#272b38; }
   .hit.go{ background:var(--hot); box-shadow:0 0 9px var(--hot); }
+
+  /* ---- collapsible controls ---- */
+  .ctoggle{ width:100%; max-width:860px; margin-top:14px; background:var(--panel);
+            border:1px solid var(--line); border-radius:12px; padding:11px 14px;
+            display:flex; align-items:center; justify-content:space-between;
+            cursor:pointer; font:inherit; color:var(--text); text-align:left; }
+  .ctoggle:hover{ background:#232736; }
+  .ctitle{ font-size:12px; letter-spacing:.07em; text-transform:uppercase; color:var(--dim); }
+  .chint { font-size:11px; color:var(--dim); }
+  .chev  { color:var(--dim); transition:transform .18s; display:inline-block; }
+  .ctoggle.open .chev{ transform:rotate(90deg); }
+  main.collapsed{ display:none; }
 </style>
 </head>
 <body>
 <header>
-  <h1>🧤 Glove Instrument</h1>
+  <h1><svg class="logo" width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
+  <!-- fingers -->
+  <rect x="7.5"  y="5"   width="4.4" height="13" rx="2.2" fill="currentColor"/>
+  <rect x="13.2" y="2.5" width="4.4" height="15.5" rx="2.2" fill="currentColor"/>
+  <rect x="18.9" y="4"   width="4.4" height="14" rx="2.2" fill="currentColor"/>
+  <rect x="24.1" y="7"   width="4.2" height="11" rx="2.1" fill="currentColor"/>
+  <!-- thumb -->
+  <g transform="rotate(-32 7 20)">
+    <rect x="2.4" y="13" width="4.4" height="10.5" rx="2.2" fill="currentColor"/>
+  </g>
+  <!-- palm -->
+  <rect x="6.6" y="14" width="21.7" height="11.5" rx="4.6" fill="currentColor"/>
+  <!-- cuff: what makes it a glove rather than a hand -->
+  <rect x="8.4" y="24.2" width="18.2" height="5.4" rx="2.3"
+        fill="currentColor" opacity=".55"/>
+  <!-- sensor dot -->
+  <circle cx="17.5" cy="20" r="2.5" fill="#12141a"/>
+</svg><span>MIMU GLOVES</span></h1>
   <span id="conn" class="bad">connecting…</span>
 </header>
 
@@ -149,6 +181,12 @@
   <div class="hcard" id="c-loop"></div>
 </section>
 <div class="tog" id="tog" hidden></div>
+
+<button class="ctoggle" id="ctoggle" aria-expanded="true">
+  <span class="ctitle">⚙ Controls</span>
+  <span class="chint"><span id="chint-text">play without gloves · instruments · modes</span>
+  &nbsp;<span class="chev">▸</span></span>
+</button>
 
 <main>
   <div class="panel">
@@ -481,12 +519,46 @@ function renderPanel(s){
     ${s.combo ? `<span class="tcombo">${s.combo==="both fists"?"✊✊ BOTH FISTS — held":"🖐️🖐️ BOTH OPEN — silence"}</span>` : "<span>—</span>"}`;
 }
 
+
+// ---- controls drawer ----------------------------------------------------
+// The panel above monitors; everything in <main> is a stand-in for gloves you
+// do not have, plus mode buttons. With hardware connected the stand-in is
+// just noise, so it folds away — but the choice is remembered, because the
+// mode buttons stay useful even when the gloves are working.
+const CTRL_KEY = "glove.controls.open";
+const ctoggle = document.getElementById("ctoggle");
+const mainEl = document.querySelector("main");
+let ctrlOpen = true, ctrlDecided = false;
+function setControls(open){
+  ctrlOpen = open;
+  mainEl.classList.toggle("collapsed", !open);
+  ctoggle.classList.toggle("open", open);
+  ctoggle.setAttribute("aria-expanded", open ? "true" : "false");
+  try { localStorage.setItem(CTRL_KEY, open ? "1" : "0"); } catch (_) {}
+}
+ctoggle.onclick = () => { ctrlDecided = true; setControls(!ctrlOpen); };
+(function initControls(){
+  let stored = null;
+  try { stored = localStorage.getItem(CTRL_KEY); } catch (_) {}
+  if (stored !== null) { ctrlDecided = true; setControls(stored === "1"); }
+  else setControls(true);
+})();
+// First time we see a real glove, fold the simulator away — unless the user
+// has already expressed a preference.
+function controlsAutoHide(hardware){
+  document.getElementById("chint-text").textContent = hardware
+    ? "instruments · modes · manual override"
+    : "play without gloves · instruments · modes";
+  if (hardware && !ctrlDecided) { ctrlDecided = true; setControls(false); }
+}
+
 // ---- state from Python --------------------------------------------------
 const $ = (id) => document.getElementById(id);
 let padLabelled = false;
 function render(s) {
   if (!s || s.roll === undefined) return;
   renderPanel(s);
+  controlsAutoHide(!!s.hardware);
   // Hardware glove connected: the pad mirrors the real hand (unless the
   // user is dragging it, which would fight the incoming data).
   if (s.hardware && !dragging) {
