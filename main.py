@@ -361,8 +361,14 @@ def main() -> None:
             # The voice hand comes either from a second glove or, with no
             # second board yet, from the same keyboard/browser source driving
             # its own set of targets.
-            vframe = (voice_source.latest if voice_source is not None
-                      else getattr(source, "latest_voice", None))
+            # The physical loop glove if it is actually connected, otherwise
+            # the browser/keyboard second hand. That means one real glove plus
+            # the UI for the other works without any extra flag — useful when
+            # you only want to test one hand, or only have one glove built.
+            if voice_source is not None and getattr(voice_source, "connected", False):
+                vframe = voice_source.latest
+            else:
+                vframe = getattr(source, "latest_voice", None)
             if vframe is not None:
                 loop_mapping.apply(vframe, synth, voice)
                 combo(frame, vframe, synth)
