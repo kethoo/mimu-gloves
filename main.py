@@ -8,7 +8,9 @@ Usage:
 With the hardware glove:
     python main.py --ble --web glove plays; browser picks instruments/modes
     python main.py --ble       glove only
-    python main.py --ble --voice-glove   both hands: instrument + voice
+    python main.py --ble --voice-glove   both hands: live + loop
+    --live-name / --loop-name            point a hand at a specific glove,
+                                         e.g. a board on older firmware
     python main.py --scan      list BLE devices; check the glove is advertising
 
 The voice glove defaults to its own microphone: hold its button to record a
@@ -183,11 +185,16 @@ def main() -> None:
 
         two = "--voice-glove" in sys.argv
         if two:
+            # Names are overridable so a board on older, un-suffixed
+            # firmware can still take a role without being reflashed —
+            # matching is by prefix, so "MIMU-GLOVE" finds it.
+            live_name = _flag_value("--live-name") or "MIMU-GLOVE-I"
+            loop_name = _flag_value("--loop-name") or "MIMU-GLOVE-V"
             glove = BleGloveSource(
-                "MIMU-GLOVE-I", label="instrument glove", managed=True
+                live_name, label="live glove", managed=True
             )
             voice_source = BleGloveSource(
-                "MIMU-GLOVE-V", tag="V:", label="voice glove", managed=True
+                loop_name, tag="V:", label="loop glove", managed=True
             )
             print("Connecting to BOTH gloves over BLE...")
         else:
