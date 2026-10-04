@@ -228,6 +228,7 @@ class BleGloveSource(GloveSource):
         # Surfaced to the UI panel: is the link up, and is the sensor sending
         # fresh data or repeating itself?
         self.connected = False
+        self._warned_no_audio = False
         # Audio arriving from the glove's own microphone.
         self._audio_expected = 0
         self._audio_rate = 16000
@@ -293,7 +294,20 @@ class BleGloveSource(GloveSource):
                         "Hold the glove still to calibrate..."
                     )
                     await client.start_notify(CHAR_UUID, self._on_packet)
-                    await client.start_notify(AUDIO_UUID, self._on_audio)
+                    # Optional: firmware older than the microphone does not
+                    # publish this characteristic, and subscribing blindly
+                    # threw, tore the link down and reconnected forever —
+                    # over a glove whose orientation was streaming fine.
+                    try:
+                        await client.start_notify(AUDIO_UUID, self._on_audio)
+                    except Exception:
+                        if not self._warned_no_audio:
+                            self._warned_no_audio = True
+                            print(
+                                f"\n[{self.label}: no audio characteristic — older "
+                                "firmware. Orientation and flex work; recording on "
+                                "the glove does not. Reflash to enable it.]"
+                            )
                     self.connected = True
                     while self._running and client.is_connected:
                         await asyncio.sleep(0.2)
