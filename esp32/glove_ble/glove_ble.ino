@@ -82,7 +82,7 @@
 // the sketch when there is no PSRAM to put the audio buffer in. Sized with
 // headroom: running the heap dry shows up as a BLE disconnect mid-recording,
 // which is far harder to diagnose than a shorter take.
-#define HEAP_RESERVE 90000
+#define HEAP_RESERVE 40000
 #define MAX_SAMPLES (AUDIO_RATE * MAX_SECONDS)
 #define AUDIO_CHUNK 180   // bytes per BLE notification during a transfer
 // 50 Hz is plenty for gesture control and leaves the I2C bus ~8x headroom;
@@ -287,7 +287,11 @@ void setup() {
     // rather than assuming: free heap after the BLE stack comes up varies by
     // core version and build options, and a hardcoded 2 s was leaving room
     // unused on some boards and would overrun on others.
-    size_t freeHeap = ESP.getFreeHeap();
+    // Largest CONTIGUOUS block, not total free. getFreeHeap() reports the
+    // sum of every free fragment, so asking malloc for that much fails on a
+    // fragmented heap — measured 228 kB free but no single block that size,
+    // which silently produced a 0-second buffer.
+    size_t freeHeap = ESP.getMaxAllocHeap();
     size_t budget = freeHeap > HEAP_RESERVE ? freeHeap - HEAP_RESERVE : 0;
     size_t want = (size_t)AUDIO_RATE * MAX_SECONDS * sizeof(int16_t);
     size_t take = budget < want ? budget : want;
@@ -295,7 +299,7 @@ void setup() {
     audioBuf = maxSamples ? (int16_t *)malloc(maxSamples * sizeof(int16_t)) : nullptr;
     if (!audioBuf) maxSamples = 0;
     Serial.printf(
-        "No PSRAM - free heap %u B, reserving %u B for BLE -> %.1f s buffer.\n",
+        "No PSRAM - largest free block %u B, reserving %u B -> %.1f s buffer.\n",
         (unsigned)freeHeap, (unsigned)HEAP_RESERVE,
         (float)maxSamples / AUDIO_RATE);
   }
