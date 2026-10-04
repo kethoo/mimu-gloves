@@ -157,6 +157,7 @@ void recoverI2CBus() {
   delayMicroseconds(5);
   Wire.begin(21, 22);
   Wire.setClock(100000);  // slower bus: safer over long jumper wires
+  Wire.setTimeOut(50);    // never block forever on a line that is still stuck
 }
 
 // Hard-reset the sensor the way the original sketch did: hold RST low,
@@ -270,6 +271,11 @@ void setup() {
   // BNO08x wedged every ~15-20 s (it kept ACKing its address but would not
   // re-initialize); at 100 kHz it ran 90 s under BLE load with zero dropouts.
   Wire.setClock(100000);
+  // A held-low SDA or SCL makes endTransmission() block, and a board that
+  // blocks here never reaches BLEDevice::init and so never advertises at
+  // all — which looks exactly like a dead board. Seen on the voice glove:
+  // serial stopped mid-way through the I2C scan and nothing followed.
+  Wire.setTimeOut(50);
   delay(100);
 
   pinMode(BTN_PIN, INPUT_PULLUP);
@@ -309,13 +315,6 @@ void setup() {
                     I2S_SLOT_MODE_MONO);
   Serial.println(micOK ? "Microphone ready." : "Microphone FAILED to start.");
 
-  hardResetSensor();
-  scanI2C();
-
-  imuPresent = initSensor();
-  if (!imuPresent)
-    Serial.println("BNO08X not found - will keep retrying (no fake data sent).");
-
   BLEDevice::init(DEVICE_NAME);
   BLEDevice::setMTU(517);   // big MTU so audio chunks fit in one packet
   BLEServer *server = BLEDevice::createServer();
@@ -334,6 +333,19 @@ void setup() {
   // "MIMU-GLOVE-V", which is a genuinely confusing thing to debug.
   Serial.print("Advertising as ");
   Serial.println(DEVICE_NAME);
+
+  // Sensor last, and only after the radio is up. The flex sensors and the
+  // microphone do not need the IMU, so a glove with a dead BNO08x should
+  // still link and still be playable — and a board that cannot be found at
+  // all is far harder to diagnose than one that connects and reports
+  // status=0. recoverI2CBus() first, to clock out a stuck line before the
+  // scan rather than after it.
+  recoverI2CBus();
+  hardResetSensor();
+  scanI2C();
+  imuPresent = initSensor();
+  if (!imuPresent)
+    Serial.println("BNO08X not found - will keep retrying (no fake data sent).");
 }
 
 void readSensor() {
