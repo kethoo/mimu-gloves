@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import struct
 import time
+from collections import deque
 
 import numpy as np
 
@@ -62,24 +63,28 @@ FLEX_SWAP = False
 
 # Readings this low are electrically impossible for the real divider and mean
 # the connection dropped out, not that a finger bent. 3V3 -> flex -> pin ->
-# 15k -> GND with a 13-16k sensor sits around 1980-2195 counts; even a 40k
-# sensor could only fall to ~1120. Anything under this is an open circuit.
+# 15k -> GND puts the count at 4095 * 15/(Rf+15), so this floor is really a
+# ceiling on sensor resistance: 1100 counts is a 41k sensor. The ones on the
+# glove measure 16.5k straight and 20.9k bent (1925 and 1709 counts), so
+# nothing real gets anywhere near it.
 #
 # They have to be rejected rather than merely ignored downstream: calibration
-# tracks the min and max ever seen, so a single 96-count dropout permanently
-# rescales the channel and squashes every real bend into the bottom tenth of
-# its range for the rest of the session.
-FLEX_VALID_MIN = 800.0
+# tracks the min and max ever seen, so one bad reading rescales the channel
+# and squashes every real bend into a sliver of its range for the rest of the
+# session. That is what a run of 811s — a 62k sensor, impossible here — did
+# while this floor was set at 800.
+FLEX_VALID_MIN = 1100.0
 
-# The learned range relaxes inward a little every sample, so a stale extreme
-# fades instead of defining the channel forever. Without it, one bad reading
-# that scrapes past FLEX_VALID_MIN permanently squashes real movement into a
-# fraction of the scale: measured a span of 1140 on a finger that only moves
-# ~150 counts, leaving the mapped value stuck between 0.01 and 0.13.
+# Calibration only widens on the median of the last few samples, never on a
+# raw one. A dropout is a spike of a sample or two; a real bend lasts tens of
+# samples at 100 Hz, so the median keeps the former out of the range entirely
+# while letting the latter straight through.
 #
-# Sized so a wrong extreme washes out in about a minute, while ordinary
-# playing keeps re-widening the range faster than it shrinks.
-FLEX_RELAX = 4.0e-4
+# This guards the window FLEX_VALID_MIN cannot: a reading that is electrically
+# plausible but still wrong, arriving before the channel knows its range. One
+# of those cost a span of 1140 on a finger that only travels ~150 counts, and
+# squashed every real bend into the bottom eighth of the scale.
+FLEX_MEDIAN = 5
 
 
 def _wrap(deg: float) -> float:
@@ -170,6 +175,7 @@ class _FlexChannel:
         self.ready = False
         self.last: float | None = None   # last good mapped value
         self.dropouts = 0                # count of rejected readings
+        self.recent: deque[float] = deque(maxlen=FLEX_MEDIAN)
 
     @property
     def span(self) -> float:
@@ -183,6 +189,7 @@ class _FlexChannel:
         self.lo = float("inf")
         self.hi = float("-inf")
         self.ready = False
+        self.recent.clear()
         print(f"\n[{self.name}: recalibrating — bend the finger fully a few times]")
 
     def update(self, raw):
@@ -203,18 +210,22 @@ class _FlexChannel:
             if raw < self.lo - span or raw > self.hi + span:
                 self.dropouts += 1
                 return self.last
-        self.lo = min(self.lo, raw)
-        self.hi = max(self.hi, raw)
+        # Widen on the median of the last few samples, not on `raw`, so a
+        # lone spike never becomes an extreme. The channel still *reports*
+        # `raw`, because the median costs latency the mapping should not pay.
+        self.recent.append(raw)
+        if len(self.recent) == FLEX_MEDIAN:
+            # Wait for a full window: with fewer samples the median is just
+            # the sample, so the first reading after connecting would define
+            # an end of the range all by itself — dropout or not.
+            settled = sorted(self.recent)[FLEX_MEDIAN // 2]
+            self.lo = min(self.lo, settled)
+            self.hi = max(self.hi, settled)
         span = self.hi - self.lo
-        # Relax the ends inward; a real bend re-widens them immediately.
-        if span > FLEX_MIN_SPAN:
-            self.lo += span * FLEX_RELAX
-            self.hi -= span * FLEX_RELAX
-            span = self.hi - self.lo
         if span < FLEX_MIN_SPAN:
             return None
-        # Clamped because the relax above can leave the live sample just
-        # outside the ends, and the postures want a true 0..1.
+        # Clamped because `raw` can sit a little outside a range learned from
+        # medians, and the postures want a true 0..1.
         u = min(max((raw - self.lo) / span, 0.0), 1.0)
         if not self.ready:
             self.ready = True

@@ -419,13 +419,19 @@ Three knobs in `ble_receiver.py` for when the hardware misbehaves:
 - **`FLEX_SWAP`** — flip if bending the *index* finger moves vibrato rather
   than volume, i.e. the two sensors are on each other's pins. Cheaper than
   unpicking the glove.
-- **`FLEX_VALID_MIN`** (800 counts) — readings below this are electrically
+- **`FLEX_VALID_MIN`** (1100 counts) — readings below this are electrically
   impossible for this divider and mean the connection dropped out, not that a
-  finger bent. They have to be *rejected*, not merely ignored: calibration
-  tracks the min and max ever seen, so a single 96-count dropout permanently
-  rescales the channel and squashes every real bend into the bottom tenth of
+  finger bent. The count is `4095 * 15/(Rf+15)`, so the floor is really a
+  ceiling on sensor resistance: 1100 counts is a 41k sensor, where the ones on
+  the glove measure 16.5k straight and 20.9k bent. They have to be *rejected*,
+  not merely ignored: calibration tracks the min and max ever seen, so one bad
+  reading rescales the channel and squashes every real bend into a sliver of
   its range for the rest of the session. Rejected samples hold the last good
   value and increment a `dropouts` counter.
+- **`FLEX_MEDIAN`** (5 samples) — the range only widens on the median of the
+  last few readings, never a single one, so a spike cannot become an extreme
+  even before the channel knows its range. Press `c` to forget a range that
+  went bad anyway.
 
 `python diagnose.py` prints the live flex ADC value and the total range seen.
 `python main.py --ble` also appends `[raw NNNN span NNN]` to its status line,
