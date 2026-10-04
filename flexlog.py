@@ -69,6 +69,49 @@ class Recorder:
         self.rows.append((time.monotonic() - self.t0, self.label, flex, flex2))
 
 
+# 3V3 -> flex(Rf) -> pin -> R_DIVIDER -> GND, so the pin reads
+# 3.3 * Rdiv/(Rf+Rdiv) and the ADC turns that into 0..4095 counts.
+# Override with --divider if the resistor on your glove is not 15k.
+R_DIVIDER = 15.0
+ADC_FULL = 4095.0
+# Set by --known-bent: flex1's resistance, in kilohms, measured with a meter
+# at full bend. One such measurement calibrates both channels.
+KNOWN_BENT = None
+
+
+def _ohms(counts: float) -> float:
+    """Sensor resistance implied by an ADC reading, in kilohms.
+
+    Treats the ADC as perfectly linear, which it is not — the ESP32's is
+    noticeably off at the ends of its range. Good enough for choosing a
+    divider resistor, not a substitute for a meter if you need the real
+    value: expect to be a kilohm or two out.
+    """
+    if counts <= 0:
+        return float("inf")
+    return R_DIVIDER * (ADC_FULL / counts - 1.0)
+
+
+def _counts(ohms: float, divider: float) -> float:
+    """The inverse: what a sensor of this resistance would read."""
+    return ADC_FULL * divider / (ohms + divider)
+
+
+def _calibrate(counts: float, known_ohms: float) -> float:
+    """Effective divider implied by one measured resistance.
+
+    Solving 4095*Rdiv/(Rf+Rdiv) = counts for Rdiv, given an Rf you put a
+    meter across. The answer absorbs everything the ideal formula gets
+    wrong at once — the ADC's nonlinearity, a 3V3 rail that is not 3.300 V,
+    a resistor that is 5% off its marking — so resistances computed with it
+    are consistent with your meter instead of with the datasheet. Both
+    channels share a rail and an ADC, so one measurement calibrates both.
+    """
+    if counts <= 0 or counts >= ADC_FULL:
+        return R_DIVIDER
+    return counts * known_ohms / (ADC_FULL - counts)
+
+
 def _clean(vals):
     """Pose samples with dropouts removed, and the count of those removed.
 
@@ -105,6 +148,21 @@ def _summarise(rows) -> None:
         print(f"{label:<12} {len(vals):>5}   {cells[0]:<28} {cells[1]:<28}")
     print("  (! = dropouts in that pose, excluded from the figures)")
 
+    # If you measured one sensor with a meter, trust that over the formula.
+    known = globals().get("KNOWN_BENT")
+    if known:
+        vals, _bad = _clean([v[0] for v in by_label.get("bent", [])]
+                            + [v[0] for v in by_label.get("bent2", [])])
+        if vals:
+            eff = _calibrate(vals[len(vals) // 2], known)
+            print(f"\nCalibrated against your meter: flex1 fully bent is "
+                  f"{known}k at {vals[len(vals) // 2]:.0f} counts, so the "
+                  f"ideal formula needs a divider of {eff:.1f}k to agree, "
+                  f"against a {R_DIVIDER:.1f}k resistor. Do not go and buy a "
+                  f"{eff:.1f}k part: that gap is mostly ADC error, now folded "
+                  f"in so the resistances below match your meter.")
+            globals()["R_DIVIDER"] = eff
+
     print()
     for i, name in ((0, "flex1 (middle)"), (1, "flex2 (index)")):
         def med(label):
@@ -122,6 +180,24 @@ def _summarise(rows) -> None:
         if travel < 80:
             print("    TOO LITTLE TRAVEL — the sensor is barely bending. Check how "
                   "it is mounted before touching any constant.")
+
+        # Resistance, so the sensor can be characterised without unpicking
+        # the glove to get a meter across it.
+        rs, rb = _ohms(s), _ohms(b)
+        print(f"    implied resistance: {rs:.1f}k straight .. {rb:.1f}k bent "
+              f"({(rb / rs - 1) * 100:+.0f}%)")
+        # Sensitivity peaks when the divider sits at the geometric mean of
+        # the two ends, which is the standard result for this circuit: it
+        # is where d(Vout)/d(Rf) is largest across the whole swing.
+        best = (rs * rb) ** 0.5
+        gain = abs(_counts(rs, best) - _counts(rb, best)) / max(travel, 1)
+        if gain > 1.25:
+            print(f"    a divider nearer {best:.0f}k would give {gain:.1f}x "
+                  f"this travel — worth swapping the resistor")
+        else:
+            print(f"    the divider is already near optimal for this sensor "
+                  f"({gain:.2f}x at best), so travel is limited by the bend, "
+                  f"not the circuit")
 
         # Drift while holding still is the figure that decides whether a
         # steady pose can be told apart from a slow real movement.
@@ -229,6 +305,11 @@ def report(path: str) -> None:
 
 
 if __name__ == "__main__":
+    for i, a in enumerate(sys.argv):
+        if a == "--divider" and i + 1 < len(sys.argv):
+            globals()["R_DIVIDER"] = float(sys.argv[i + 1])
+        if a == "--known-bent" and i + 1 < len(sys.argv):
+            globals()["KNOWN_BENT"] = float(sys.argv[i + 1])
     if "--report" in sys.argv:
         i = sys.argv.index("--report")
         report(sys.argv[i + 1] if i + 1 < len(sys.argv) else OUT)
