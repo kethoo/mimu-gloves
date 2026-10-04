@@ -282,6 +282,10 @@ def handle_event(event: str, synth: GloveSynth,
     """Discrete gestures / button presses (drained from the event queue)."""
     st = state or _default
     if event == "punch":
+        # A flick also opens the gate. Without flex calibrated there is no
+        # other gesture that can start the sound, and on a glove with one
+        # working sensor that left the instrument unplayable.
+        synth.set_gate(True)
         if synth.slices_on:
             synth.trigger_slice()
         else:

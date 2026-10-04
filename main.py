@@ -330,8 +330,11 @@ def main() -> None:
     print(f"[audio  {synth.describe_devices()}]")
     synth.drone_on = start_sounding
     if not start_sounding:
-        print("[silent until you play — make a fist, bend the index finger, "
-              "or press 'm']")
+        keys_here = isinstance(source, SimulatedGloveSource)
+        how = "press 'm' here" if keys_here else (
+            "click 'drone' in the browser, or press m with the page focused")
+        print(f"[silent until you play — flick your wrist, make a fist, "
+              f"bend the index finger, or {how}]")
     hand = mapping.HandState()
     voice = loop_mapping.LoopState()
     mapping.apply_scene(synth, hand)  # scene 1 sets instrument, scale and modes
