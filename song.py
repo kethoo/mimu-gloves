@@ -95,8 +95,34 @@ def _decode(path: pathlib.Path) -> tuple[np.ndarray, int]:
     return data.mean(axis=1), rate
 
 
-def _download(url: str) -> pathlib.Path:
-    """Fetch a link's audio, cached by URL so a second run is instant."""
+def _tidy_error(exc: Exception, url: str) -> str:
+    """One readable line out of a yt-dlp failure.
+
+    Its errors arrive as a paragraph with the extractor name, a stack of
+    'caused by' clauses and ANSI colour. That is fine in a terminal and
+    useless in the status line of a web page, which is where this one is
+    going to be read.
+    """
+    text = re.sub(r"\x1b\[[0-9;]*m", "", str(exc)).strip()
+    text = text.replace("ERROR: ", "")
+    text = re.sub(r"^\[[^\]]+\]\s*", "", text)        # drop "[generic] "
+    text = text.split(" (caused by")[0].strip()
+    if "404" in text or "Not Found" in text:
+        return "not found (404) — check the link"
+    if "Unable to download webpage" in text or "Failed to resolve" in text:
+        return "could not reach that link"
+    # Still cap it: some extractor messages run to several lines.
+    return text.split("\n")[0][:120] or f"could not download {url}"
+
+
+def _download(url: str) -> tuple[pathlib.Path, str]:
+    """Fetch a link's audio, cached by URL so a second run is instant.
+
+    Returns the file and the track's title. The file is named after a hash
+    of the URL — titles are not safe filenames — so the title is kept
+    beside it, or the page would show a line of hex where a song name
+    should be.
+    """
     try:
         import yt_dlp
     except ImportError as exc:
@@ -106,25 +132,52 @@ def _download(url: str) -> pathlib.Path:
 
     CACHE.mkdir(exist_ok=True)
     tag = hashlib.sha256(url.encode()).hexdigest()[:16]
-    for existing in CACHE.glob(tag + ".*"):
-        print(f"[song] using cached download: {existing.name}")
-        return existing
+    title_file = CACHE / (tag + ".title")
+
+    def _audio_files():
+        # Excludes the .title sidecar, which would otherwise look like the
+        # download itself and be handed to the decoder.
+        return [p for p in CACHE.glob(tag + ".*") if p.suffix != ".title"]
+
+    cached = _audio_files()
+    if cached:
+        title = title_file.read_text().strip() if title_file.exists() else cached[0].stem
+        print(f"[song] using cached download: {title}")
+        return cached[0], title
 
     print(f"[song] downloading {url} ...")
+
+    class _Silent:
+        """`quiet` does not cover errors — yt-dlp writes those to stderr on
+        its own. We raise a tidied version of the same thing, so letting it
+        print as well just means the raw paragraph lands next to the clean
+        line that replaced it."""
+
+        def debug(self, msg): pass
+        def info(self, msg): pass
+        def warning(self, msg): pass
+        def error(self, msg): pass
+
     opts = {
         "format": "bestaudio/best",
         "outtmpl": str(CACHE / (tag + ".%(ext)s")),
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
+        "logger": _Silent(),
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-    got = list(CACHE.glob(tag + ".*"))
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception as exc:
+        raise RuntimeError(_tidy_error(exc, url)) from exc
+    got = _audio_files()
     if not got:
         raise RuntimeError(f"download produced no file for {url}")
-    print(f"[song] got: {info.get('title', got[0].name)}")
-    return got[0]
+    title = (info.get("title") or got[0].stem).strip()
+    title_file.write_text(title)
+    print(f"[song] got: {title}")
+    return got[0], title
 
 
 def load(src: str, start: float = 0.0, seconds: float | None = None
@@ -143,8 +196,7 @@ def load(src: str, start: float = 0.0, seconds: float | None = None
 
     if _is_url(src):
         url = src if src.startswith("http") else "https://" + src
-        path = _download(url)
-        name = path.stem
+        path, name = _download(url)
     else:
         path = pathlib.Path(src).expanduser()
         if not path.exists():
