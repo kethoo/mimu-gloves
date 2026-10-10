@@ -2,5 +2,10 @@
 __pycache__/
 *.py[cod]
 .DS_Store
-.song-cache/   # downloaded audio for --song; re-fetchable, never committed
+
+# Downloaded audio for --song. Re-fetchable, often large, and not ours to
+# redistribute. Comments go on their own line: git has no trailing-comment
+# syntax, so ".song-cache/  # note" is a pattern that matches nothing and
+# silently committed a 57 MB download.
+.song-cache/
 flexlog.csv
