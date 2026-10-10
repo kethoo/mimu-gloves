@@ -340,6 +340,24 @@ def main() -> None:
             "click 'drone' in the browser, or press m with the page focused")
         print(f"[silent until you play — flick your wrist, make a fist, "
               f"bend the index finger, or {how}]")
+    song_name = None
+    song_src = _flag_value("--song")
+    if song_src:
+        import song as song_loader
+
+        try:
+            samples, rate, song_name = song_loader.load(
+                song_src,
+                start=float(_flag_value("--song-start") or 0.0),
+                seconds=float(_flag_value("--song-seconds") or 0.0) or None,
+            )
+            synth.set_loop(samples, rate, label=song_name)
+        except Exception as exc:
+            # A bad path or a dead link should not cost you the instrument:
+            # the gloves still play, just without a record on the deck.
+            print(f"[song] could not load {song_src}: {exc}")
+            song_name = None
+
     hand = mapping.HandState()
     voice = loop_mapping.LoopState()
     mapping.apply_scene(synth, hand)  # scene 1 sets instrument, scale and modes
@@ -443,6 +461,7 @@ def main() -> None:
                     "recording": synth.is_recording,
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,
+                    "loop_label": synth.loop_label,
                     "flex": frame.flex, "flex2": frame.flex2,
                     # Tells the UI the pose comes from the real glove, so it
                     # mirrors the hand instead of waiting to be dragged.
@@ -479,6 +498,8 @@ def main() -> None:
                         "preset_total": len(loop_mapping.PRESETS),
                         "delay": synth.voice_delay_on,
                         "loop_secs": synth.loop_seconds,
+                        "loop_label": synth.loop_label,
+                        "has_song": song_name is not None,
                     }),
                     "width": synth.target_width,
                     "combo": ("both fists" if (live_p == "fist" and loop_p == "fist")

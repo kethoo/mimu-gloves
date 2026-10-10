@@ -318,6 +318,28 @@ Button-like gestures travel as an **event queue** (`GloveSource.events`),
 separate from the continuous orientation stream, so a press is never missed
 or applied twice.
 
+## Playing a record (`--song`)
+
+The loop buffer does not care where its audio came from, so a track can go
+in it instead of your voice and every loop-hand gesture then works on the
+track: scrub through it with roll, stretch it with tilt, freeze a grain,
+fire a slice with a flick.
+
+```bash
+python main.py --ble --voice-glove --web --song track.mp3
+python main.py --web --song "https://..." --song-start 60 --song-seconds 20
+```
+
+`--song-start` and `--song-seconds` pick a section, which is usually what
+you want: scrubbing a whole four-minute track means every gesture covers
+four minutes at once, where a chorus or a break is far more playable.
+
+Files go through libsndfile (WAV, FLAC, OGG, MP3) and fall back to ffmpeg
+for anything else. Links need `yt-dlp` and ffmpeg, and are cached in
+`.song-cache/` so a second run is instant. Note that downloading audio from
+YouTube is against their terms of service — fine for trying this out, not
+something to demo publicly or rely on in the writeup.
+
 ## Live voice mode (`l`)
 
 The mic streams straight through the synth while you speak — no recording

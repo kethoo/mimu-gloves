@@ -621,6 +621,7 @@ const LOOP_OPTS = {
   big: h => !h.linked ? "searching" : h.frozen ? "FROZEN"
             : (POSTURE_LABEL[h.posture] || (h.mode==="granular" ? "SCRUBBING" : "LOOP")),
   sub: h => !h.linked ? "no glove"
+            : h.has_song ? `${h.mode} · ${h.loop_label} (${h.loop_secs.toFixed(0)}s)`
             : `${h.mode} · ${h.loop_secs>0?h.loop_secs.toFixed(1)+" s captured":"no recording yet"}`,
   rows: h => [["scrub", h.scrub||0, Math.round((h.scrub||0)*100)+"%"],
               ["speed", ((Math.log2(h.speed||1)+1)/2), (h.speed||1).toFixed(2)+"x"],

@@ -5,6 +5,10 @@ bleak         # Bluetooth LE: --ble, --scan, diagnose.py
 pyserial      # serial monitor for the ESP32 (monitor.py)
 python-rtmidi # --midi only: streams notes/CCs to a DAW (see midi_out.py).
               # Everything else runs without it; the import is lazy.
+soundfile     # --song only: decodes WAV/FLAC/OGG/MP3 into the loop buffer.
+yt-dlp        # --song only, and only for links. Anything libsndfile cannot
+              # read (AAC, Opus - most downloads) also needs ffmpeg on PATH:
+              # brew install ffmpeg. All three are lazy imports too.
 
 # No fusion library (e.g. imufusion) is needed: the BNO08x fuses on-chip
 # and sends finished orientation.

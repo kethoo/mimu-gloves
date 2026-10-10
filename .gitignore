@@ -2,3 +2,5 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+.song-cache/   # downloaded audio for --song; re-fetchable, never committed
+flexlog.csv

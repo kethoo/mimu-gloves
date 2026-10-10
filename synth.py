@@ -201,6 +201,7 @@ class GloveSynth:
         # bent finger or `m` starts it.
         self.drone_on = False
         self.loop_on = False
+        self.loop_label = "glove take"   # what the panel calls what is loaded
         self._loop_buf: np.ndarray | None = None
         self._loop_pos = 0.0
         self._rec_stream: sd.InputStream | None = None
@@ -468,11 +469,12 @@ class GloveSynth:
             self.loop_on = True
             print(f"\n[{len(take) / SAMPLE_RATE:.1f}s recorded — looping; move your hand to shape it]")
 
-    def set_loop(self, samples, rate: int) -> None:
-        """Install a recording made elsewhere (the glove's own mic) as the
-        voice loop, resampled to the audio engine's rate. Everything
-        downstream — pitch, granular, slices, overdub — then works on it
-        exactly as it does on a laptop-recorded take."""
+    def set_loop(self, samples, rate: int, label: str = "glove take") -> None:
+        """Install a recording made elsewhere as the voice loop, resampled
+        to the audio engine's rate. Everything downstream — pitch, granular,
+        slices, overdub — then works on it exactly as it does on a
+        laptop-recorded take. `label` is what the console calls it: a glove
+        take by default, or a song's name when one has been loaded."""
         samples = np.asarray(samples, dtype=np.float64)
         if len(samples) < 2:
             return
@@ -492,7 +494,8 @@ class GloveSynth:
         self._grains = []
         self._shot = None
         self.loop_on = True
-        print(f"\n[glove take loaded — {len(samples) / SAMPLE_RATE:.1f}s looping]")
+        self.loop_label = label
+        print(f"\n[{label} loaded — {len(samples) / SAMPLE_RATE:.1f}s looping]")
 
     def toggle_granular(self) -> None:
         self.granular_on = not self.granular_on
