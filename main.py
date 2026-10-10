@@ -461,6 +461,11 @@ def main() -> None:
             if voice_source is not None:
                 events += voice_source.drain_events()
             for event in events:
+                if event.endswith("song_clear"):
+                    synth.clear_loop()
+                    song_state["status"] = ""
+                    song_name = None
+                    continue
                 if event.endswith("recalibrate"):
                     # Only a real glove has flex calibration to reset; from
                     # the keyboard or the browser the bend is already a

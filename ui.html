@@ -353,7 +353,7 @@
              placeholder="paste a link, or a path like ~/Music/track.mp3">
       <div class="btnrow" style="grid-template-columns:2fr 1fr; margin-top:8px">
         <button id="songload">▶ load into loop</button>
-        <button id="songclear">clear</button>
+        <button id="songclear">⏏ eject</button>
       </div>
       <div id="songstatus"></div>
       <div class="hint">
@@ -363,6 +363,9 @@
         Add <code>#t=60</code> to a link, or <code>#60</code> to a path, to
         start 60 s in — scrubbing a whole track means one wrist rotation
         covers four minutes.
+        <b>Eject</b> stops it and empties the buffer; <kbd>p</kbd> just
+        pauses. Reloading this page does not stop anything — the sound comes
+        from the python process, and this is only a window onto it.
       </div>
     </div>
   </div>
@@ -486,8 +489,13 @@ document.getElementById("songload").onclick = loadSong;
 songSrc.addEventListener("keydown", (e) => {
   if (e.key === "Enter") { loadSong(); e.preventDefault(); }
 });
-document.getElementById("songclear").onclick =
-  () => { songSrc.value = ""; songSrc.focus(); };
+// Eject stops the audio as well as emptying the box. Clearing only the
+// text looked like it had done something while the song kept playing.
+document.getElementById("songclear").onclick = () => {
+  sendEvent("song_clear");
+  songSrc.value = "";
+  setSongStatus("", "");
+};
 
 function setSongStatus(text, cls) {
   const el = document.getElementById("songstatus");

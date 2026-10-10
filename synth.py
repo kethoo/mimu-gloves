@@ -530,6 +530,24 @@ class GloveSynth:
         self.loop_on = not self.loop_on
         print("\n[voice loop on]" if self.loop_on else "\n[voice loop off]")
 
+    def clear_loop(self) -> None:
+        """Stop whatever is in the loop and throw it away.
+
+        Stronger than toggle_loop, which only pauses: a song loaded from the
+        panel has to be removable, and pausing leaves it ready to restart on
+        the next gesture that touches the loop. Order matters — the flag goes
+        down before the buffer, so the audio callback never sees loop_on with
+        nothing to read.
+        """
+        self.loop_on = False
+        self.granular_on = False
+        self._loop_buf = None
+        self._loop_pos = 0.0
+        self._grains = []
+        self._shot = None
+        self.loop_label = "glove take"
+        print("\n[loop cleared]")
+
     def toggle_drone(self) -> None:
         self.drone_on = not self.drone_on
         print("\n[drone on]" if self.drone_on else "\n[drone muted]")
