@@ -340,6 +340,32 @@ for anything else. Links need `yt-dlp` and ffmpeg, and are cached in
 YouTube is against their terms of service — fine for trying this out, not
 something to demo publicly or rely on in the writeup.
 
+## Playing a written tune (`--melody`)
+
+A `--song` is a waveform: you can scrub and stretch it, but you cannot
+change a note of it, because a mixed recording has no "melody" in it to
+change. A MIDI file *is* the notes, so the synth plays it and the hands do
+what no audio effect can.
+
+```bash
+python main.py --ble --voice-glove --web --melody tune.mid
+```
+
+Or paste a `.mid` path into the same Song box in the browser — the file
+extension decides which of the two it is.
+
+While a tune plays, **tilt transposes it** (+/- an octave) instead of
+picking a note from the scale: that is the one reading of tilt that still
+means something once the notes are written. The loop hand's speed gesture
+pulls the **tempo**, since it has no recording to stretch. Everything else
+is unchanged — filter, pan, volume, postures, effects — because none of it
+is about *which* note sounds.
+
+The synth is monophonic, so a chord becomes its top note, which is the tune
+in almost all written music. All tracks are merged before that: plenty of
+files put the melody on track 2 or split it across several, and MIDI has no
+such thing as a "melody track".
+
 ## Live voice mode (`l`)
 
 The mic streams straight through the synth while you speak — no recording

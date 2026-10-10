@@ -66,9 +66,21 @@ def _request_song(src: str, synth, state: dict) -> None:
         import song as song_loader
 
         try:
-            samples, rate, name = song_loader.load(src)
-            state["loaded"] = (samples, rate, name)
-            state["status"] = f"{name} — {len(samples) / rate:.0f}s"
+            # One box for both, because the file says which it is. A .mid
+            # holds notes and plays through the instruments; anything else
+            # is a waveform and goes in the loop buffer.
+            if src.split("#")[0].lower().endswith((".mid", ".midi")):
+                import melody as melody_mod
+
+                mel = melody_mod.load(src.split("#")[0])
+                state["melody"] = mel
+                lo, hi = mel.span
+                state["status"] = (f"{mel.name} — {len(mel)} notes, "
+                                   f"{mel.length:.0f}s")
+            else:
+                samples, rate, name = song_loader.load(src)
+                state["loaded"] = (samples, rate, name)
+                state["status"] = f"{name} — {len(samples) / rate:.0f}s"
         except Exception as exc:
             # Shown in the page rather than only the terminal: the player
             # is looking at the browser, and a typo in a path is the most
@@ -377,6 +389,15 @@ def main() -> None:
         print(f"[silent until you play — flick your wrist, make a fist, "
               f"bend the index finger, or {how}]")
     song_name = None
+    seq = None
+    mel_src = _flag_value("--melody")
+    if mel_src:
+        import melody as melody_mod
+
+        try:
+            seq = melody_mod.Sequencer(melody_mod.load(mel_src))
+        except Exception as exc:
+            print(f"[melody] could not load {mel_src}: {exc}")
     # Shared with the loader thread: status text for the page, the finished
     # buffer, and a busy flag so a second click cannot start a second fetch.
     song_state: dict = {"status": "", "busy": False}
@@ -442,7 +463,11 @@ def main() -> None:
     try:
         while not getattr(source, "quit_requested", False):
             frame = source.latest
-            mapping.apply(frame, synth, hand)
+            if seq is not None:
+                # Before the mapping, so the hand's transpose applies to the
+                # note this tick plays rather than the one before it.
+                seq.update(synth, 1.0 / CONTROL_RATE)
+            mapping.apply(frame, synth, hand, seq=seq)
             # The voice hand comes either from a second glove or, with no
             # second board yet, from the same keyboard/browser source driving
             # its own set of targets.
@@ -456,6 +481,10 @@ def main() -> None:
                 vframe = getattr(source, "latest_voice", None)
             if vframe is not None:
                 loop_mapping.apply(vframe, synth, voice)
+                if seq is not None:
+                    # The loop hand's speed gesture has nothing to stretch
+                    # when a tune is playing, so it pulls the tempo instead.
+                    seq.rate = synth.target_rate
                 combo(frame, vframe, synth)
             events = list(source.drain_events())
             if voice_source is not None:
@@ -463,6 +492,7 @@ def main() -> None:
             for event in events:
                 if event.endswith("song_clear"):
                     synth.clear_loop()
+                    seq = None
                     song_state["status"] = ""
                     song_name = None
                     continue
@@ -494,9 +524,16 @@ def main() -> None:
             if take is not None:
                 synth.set_loop(*take)
                 song_state["status"] = ""   # a glove take replaces the song
+                seq = None
             want = source.take_song()
             if want is not None:
                 _request_song(want, synth, song_state)
+            new_mel = song_state.pop("melody", None)
+            if new_mel is not None:
+                import melody as melody_mod
+
+                seq = melody_mod.Sequencer(new_mel)
+                synth.clear_loop()   # a tune and a record at once is mud
             loaded = song_state.pop("loaded", None)
             if loaded is not None:
                 # Installed here, on the thread that owns the synth, rather
@@ -520,6 +557,13 @@ def main() -> None:
                     "loop_label": synth.loop_label,
                     "song_status": song_state["status"],
                     "song_busy": song_state["busy"],
+                    "melody": None if seq is None else {
+                        "name": seq.melody.name,
+                        "note": seq.current,
+                        "progress": seq.progress,
+                        "rate": seq.rate,
+                        "notes": len(seq.melody),
+                    },
                     "flex": frame.flex, "flex2": frame.flex2,
                     # Tells the UI the pose comes from the real glove, so it
                     # mirrors the hand instead of waiting to be dragged.

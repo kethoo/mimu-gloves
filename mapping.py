@@ -134,6 +134,7 @@ class HandState:
 
     def __init__(self) -> None:
         self.last_step = 0
+        self.last_transpose = 0            # semitones, melody mode only
         self.scene = 0
         self.posture: str | None = None    # posture currently committed to
         self.pending: str | None = None    # being held, not yet committed
@@ -206,7 +207,15 @@ def next_scene(synth: GloveSynth, state: HandState | None = None) -> None:
 
 
 def apply(frame: SensorFrame, synth: GloveSynth,
-          state: HandState | None = None) -> None:
+          state: HandState | None = None, seq=None) -> None:
+    """Map one hand's pose onto the synth.
+
+    `seq` is a melody.Sequencer when a MIDI tune is playing. It owns the
+    note, so tilt transposes the piece instead of picking from the scale —
+    the only reading of tilt that still means anything once the notes are
+    already written. Nothing else changes: filter, pan, volume, postures
+    and effects are all about how a note sounds, not which one.
+    """
     st = state or _default
 
     # ---- postures ---------------------------------------------------------
@@ -231,10 +240,20 @@ def apply(frame: SensorFrame, synth: GloveSynth,
 
     # tilt up/down -> index into the scale, with hysteresis so a hand
     # hovering on a boundary holds its note
-    pos = _norm(frame.pitch, PITCH_RANGE) * (len(scale) - 1)
-    if abs(pos - st.last_step) > 0.5 + STEP_HYSTERESIS:
-        st.last_step = min(max(int(round(pos)), 0), len(scale) - 1)
-    synth.target_freq = midi_to_hz(scale[min(st.last_step, len(scale) - 1)])
+    if seq is not None:
+        # Melody mode: tilt transposes. Same hysteresis as the scale
+        # quantizer and for the same reason — a hand resting on a semitone
+        # boundary would otherwise retune the whole piece 50 times a second.
+        want = _norm(frame.pitch, PITCH_RANGE) * 2.0 - 1.0
+        semis = want * seq.TRANSPOSE_RANGE
+        if abs(semis - st.last_transpose) > 0.5 + STEP_HYSTERESIS:
+            st.last_transpose = int(round(semis))
+        seq.transpose = st.last_transpose
+    else:
+        pos = _norm(frame.pitch, PITCH_RANGE) * (len(scale) - 1)
+        if abs(pos - st.last_step) > 0.5 + STEP_HYSTERESIS:
+            st.last_step = min(max(int(round(pos)), 0), len(scale) - 1)
+        synth.target_freq = midi_to_hz(scale[min(st.last_step, len(scale) - 1)])
 
     # rotate wrist -> cutoff, exponential so it feels even to the ear
     roll_u = _norm(frame.roll, ROLL_RANGE)

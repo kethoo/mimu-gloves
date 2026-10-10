@@ -100,6 +100,13 @@
                 min-height: 18px; word-break: break-word; }
   #songstatus.ok  { color: var(--accent); }
   #songstatus.bad { color: var(--hot); }
+  /* Melody progress: a plain bar, because the useful information while
+     playing is "where am I in the tune", not an exact number. */
+  .meltrack { height: 6px; border-radius: 3px; background: var(--gtrack);
+              overflow: hidden; margin-top: 6px; }
+  #melfill { height: 100%; width: 0%; background: var(--accent);
+             transition: width .1s linear; }
+  #melnote { font-variant-numeric: tabular-nums; color: var(--accent); }
   #songstatus.busy::before {
     content: ""; display: inline-block; width: 9px; height: 9px;
     margin-right: 7px; border-radius: 50%;
@@ -350,12 +357,16 @@
     <div class="panel" style="margin-top:16px">
       <div class="label">Song — play a record with the loop hand</div>
       <input id="songsrc" type="text" spellcheck="false"
-             placeholder="paste a link, or a path like ~/Music/track.mp3">
+             placeholder="paste a link, a path like ~/Music/track.mp3, or a .mid">
       <div class="btnrow" style="grid-template-columns:2fr 1fr; margin-top:8px">
         <button id="songload">▶ load into loop</button>
         <button id="songclear">⏏ eject</button>
       </div>
       <div id="songstatus"></div>
+      <div id="melodybar" style="display:none">
+        <div class="rowlabel"><span id="melname">—</span><b id="melnote">—</b></div>
+        <div class="meltrack"><div id="melfill"></div></div>
+      </div>
       <div class="hint">
         Whatever loads here replaces the loop buffer, so every loop-hand
         gesture works on it: roll scrubs, tilt stretches 0.5×–2×, a fist
@@ -363,6 +374,10 @@
         Add <code>#t=60</code> to a link, or <code>#60</code> to a path, to
         start 60 s in — scrubbing a whole track means one wrist rotation
         covers four minutes.
+        A <b>.mid</b> is different: it is notes, not a recording, so it
+        plays through your own instruments. Tilt then transposes the tune
+        instead of picking a note, the loop hand pulls the tempo, and the
+        posture that changes instrument changes what is playing it.
         <b>Eject</b> stops it and empties the buffer; <kbd>p</kbd> just
         pauses. Reloading this page does not stop anything — the sound comes
         from the python process, and this is only a window onto it.
@@ -804,6 +819,20 @@ function render(s) {
   document.querySelectorAll("[data-ins]").forEach((b) =>
     b.classList.toggle("on", b.dataset.ins === s.instrument));
   $("loopinfo").textContent = s.loop_secs ? "loop: " + s.loop_secs.toFixed(1) + "s" : "no loop yet";
+  // A .mid plays through the instruments rather than the loop buffer, so
+  // it gets its own readout: which note is sounding and how far in we are.
+  const mel = s.melody;
+  const bar = document.getElementById("melodybar");
+  if (bar) {
+    bar.style.display = mel ? "block" : "none";
+    if (mel) {
+      document.getElementById("melname").textContent =
+        mel.name + " · " + mel.notes + " notes · " + mel.rate.toFixed(2) + "x";
+      document.getElementById("melnote").textContent = mel.note;
+      document.getElementById("melfill").style.width =
+        Math.max(0, Math.min(1, mel.progress)) * 100 + "%";
+    }
+  }
   if (s.song_status !== undefined) {
     const txt = s.song_status || "";
     setSongStatus(txt, s.song_busy ? "busy"
