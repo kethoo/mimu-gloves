@@ -45,6 +45,42 @@ from synth import GloveSynth
 CONTROL_RATE = 100  # Hz
 
 
+def _request_song(src: str, synth, state: dict) -> None:
+    """Fetch and decode a song off the control loop.
+
+    A download is seconds of network, and this loop also reads the gloves
+    and feeds the UI at 100 Hz — doing it inline freezes the hands and the
+    page until it finishes. The thread only decodes; the finished buffer is
+    handed back through `state` and installed by the caller, because
+    set_loop swaps the array the audio callback is reading.
+    """
+    import threading
+
+    if state.get("busy"):
+        state["status"] = "already loading something — wait for it"
+        return
+    state["busy"] = True
+    state["status"] = f"loading {src.split('/')[-1][:40]}..."
+
+    def work() -> None:
+        import song as song_loader
+
+        try:
+            samples, rate, name = song_loader.load(src)
+            state["loaded"] = (samples, rate, name)
+            state["status"] = f"{name} — {len(samples) / rate:.0f}s"
+        except Exception as exc:
+            # Shown in the page rather than only the terminal: the player
+            # is looking at the browser, and a typo in a path is the most
+            # likely thing to go wrong here.
+            state["status"] = f"failed: {exc}"
+            print(f"[song] could not load {src}: {exc}")
+        finally:
+            state["busy"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+
+
 def _flag_value(flag: str) -> str | None:
     """Value of a `--flag VALUE` argument, or None if absent."""
     if flag in sys.argv:
@@ -341,6 +377,9 @@ def main() -> None:
         print(f"[silent until you play — flick your wrist, make a fist, "
               f"bend the index finger, or {how}]")
     song_name = None
+    # Shared with the loader thread: status text for the page, the finished
+    # buffer, and a busy flag so a second click cannot start a second fetch.
+    song_state: dict = {"status": "", "busy": False}
     song_src = _flag_value("--song")
     if song_src:
         import song as song_loader
@@ -352,6 +391,7 @@ def main() -> None:
                 seconds=float(_flag_value("--song-seconds") or 0.0) or None,
             )
             synth.set_loop(samples, rate, label=song_name)
+            song_state["status"] = f"{song_name} — {len(samples) / rate:.0f}s"
         except Exception as exc:
             # A bad path or a dead link should not cost you the instrument:
             # the gloves still play, just without a record on the deck.
@@ -448,6 +488,17 @@ def main() -> None:
                 take = voice_source.take_audio()
             if take is not None:
                 synth.set_loop(*take)
+                song_state["status"] = ""   # a glove take replaces the song
+            want = source.take_song()
+            if want is not None:
+                _request_song(want, synth, song_state)
+            loaded = song_state.pop("loaded", None)
+            if loaded is not None:
+                # Installed here, on the thread that owns the synth, rather
+                # than from the loader thread: set_loop swaps the buffer the
+                # audio callback is reading.
+                synth.set_loop(loaded[0], loaded[1], label=loaded[2])
+                song_name = loaded[2]
             publish = getattr(source, "publish", None)
             if publish is not None:
                 live_p = hand.posture
@@ -462,6 +513,8 @@ def main() -> None:
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,
                     "loop_label": synth.loop_label,
+                    "song_status": song_state["status"],
+                    "song_busy": song_state["busy"],
                     "flex": frame.flex, "flex2": frame.flex2,
                     # Tells the UI the pose comes from the real glove, so it
                     # mirrors the hand instead of waiting to be dragged.
@@ -500,6 +553,8 @@ def main() -> None:
                         "loop_secs": synth.loop_seconds,
                         "loop_label": synth.loop_label,
                         "has_song": song_name is not None,
+                        "song_status": song_state["status"],
+                        "song_busy": song_state["busy"],
                     }),
                     "width": synth.target_width,
                     "combo": ("both fists" if (live_p == "fist" and loop_p == "fist")

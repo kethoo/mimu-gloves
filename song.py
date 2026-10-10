@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -33,6 +34,24 @@ CACHE = pathlib.Path(__file__).parent / ".song-cache"
 
 def _is_url(src: str) -> bool:
     return src.startswith(("http://", "https://", "www."))
+
+
+# A trailing "#t=90", "#90" or "#90-110" picks a section, so the whole
+# request fits in one box in the UI. Only a numeric fragment counts: a file
+# really can be called "mix #2.wav", and that must keep working.
+_FRAGMENT = re.compile(r"#(?:t=)?(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?$")
+
+
+def _split_fragment(src: str) -> tuple[str, float, float | None]:
+    """Pull a time range off the end of a path or URL."""
+    m = _FRAGMENT.search(src)
+    if not m:
+        return src, 0.0, None
+    start = float(m.group(1))
+    end = float(m.group(2)) if m.group(2) else None
+    if end is not None and end <= start:
+        return src[: m.start()], start, None
+    return src[: m.start()], start, (end - start) if end else None
 
 
 def _ffmpeg_decode(path: pathlib.Path, rate: int = 44100) -> tuple[np.ndarray, int]:
@@ -116,6 +135,12 @@ def load(src: str, start: float = 0.0, seconds: float | None = None
     a whole track makes every scrub gesture cover four minutes at once, so
     a chorus or a break is far more playable than the lot.
     """
+    # An explicit start/seconds argument wins over one typed into the text,
+    # so --song-start still does what it says alongside a "#90" in the path.
+    src, frag_start, frag_seconds = _split_fragment(src.strip())
+    start = start or frag_start
+    seconds = seconds or frag_seconds
+
     if _is_url(src):
         url = src if src.startswith("http") else "https://" + src
         path = _download(url)

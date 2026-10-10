@@ -82,6 +82,14 @@ class WebGloveSource(GloveSource):
                             t.flex = _clamp(msg["flex"], 0.0, 1.0)
                         if msg.get("flex2") is not None:
                             t.flex2 = _clamp(msg["flex2"], 0.0, 1.0)
+                    elif kind == "song":
+                        # Carries a payload, so it cannot ride the plain
+                        # event queue. Loading happens on the main thread:
+                        # a download can take ten seconds and this one
+                        # serves the UI socket.
+                        src = str(msg.get("src", "")).strip()
+                        if src:
+                            self.song = src
                     elif kind == "event":
                         name = msg.get("name", "")
                         if name in ALLOWED_EVENTS or name.startswith("instrument:"):

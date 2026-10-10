@@ -87,6 +87,26 @@
   .rowlabel { display: flex; justify-content: space-between; font-size: 13px;
               color: var(--dim); margin: 14px 0 4px; }
   input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=text] {
+    width: 100%; box-sizing: border-box;
+    background: var(--btn); color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 10px 11px; font: inherit; font-size: 14px;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  input[type=text]::placeholder { color: var(--dim); }
+  /* Status of a song load: dim while idle, accent on success, hot on
+     failure — the three things worth telling apart at a glance. */
+  #songstatus { font-size: 13px; color: var(--dim); margin-top: 8px;
+                min-height: 18px; word-break: break-word; }
+  #songstatus.ok  { color: var(--accent); }
+  #songstatus.bad { color: var(--hot); }
+  #songstatus.busy::before {
+    content: ""; display: inline-block; width: 9px; height: 9px;
+    margin-right: 7px; border-radius: 50%;
+    border: 2px solid var(--accent); border-top-color: transparent;
+    animation: spin .7s linear infinite; vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   .btnrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   button {
@@ -326,6 +346,25 @@
         Live voice: wear headphones, speak, roll = pitch, motion = echo.
       </div>
     </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="label">Song — play a record with the loop hand</div>
+      <input id="songsrc" type="text" spellcheck="false"
+             placeholder="paste a link, or a path like ~/Music/track.mp3">
+      <div class="btnrow" style="grid-template-columns:2fr 1fr; margin-top:8px">
+        <button id="songload">▶ load into loop</button>
+        <button id="songclear">clear</button>
+      </div>
+      <div id="songstatus"></div>
+      <div class="hint">
+        Whatever loads here replaces the loop buffer, so every loop-hand
+        gesture works on it: roll scrubs, tilt stretches 0.5×–2×, a fist
+        freezes, a flick fires the slice under your hand.
+        Add <code>#t=60</code> to a link, or <code>#60</code> to a path, to
+        start 60 s in — scrubbing a whole track means one wrist rotation
+        covers four minutes.
+      </div>
+    </div>
   </div>
 </main>
 
@@ -428,10 +467,42 @@ document.querySelectorAll("[data-ev]").forEach((b) => (b.onclick = () => sendEve
 document.querySelectorAll("[data-ins]").forEach((b) => (b.onclick = () => sendEvent("instrument:" + b.dataset.ins)));
 document.getElementById("punch").onclick = () => sendEvent("punch");
 
+// ---- song loading -------------------------------------------------------
+// The box takes a path or a link; the backend does the fetching and reports
+// back through `song_status`, because a download is far too slow to wait on
+// here. Enter submits, so pasting and hitting return is the whole gesture.
+//
+// getElementById rather than the $ helper: that is a `const` declared much
+// further down, so reaching for it here throws and kills the rest of the
+// script — every control below this line stops working, not just this panel.
+const songSrc = document.getElementById("songsrc");
+function loadSong() {
+  const src = songSrc.value.trim();
+  if (!src) { songSrc.focus(); return; }
+  send({ type: "song", src });
+  setSongStatus("sending...", "busy");
+}
+document.getElementById("songload").onclick = loadSong;
+songSrc.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { loadSong(); e.preventDefault(); }
+});
+document.getElementById("songclear").onclick =
+  () => { songSrc.value = ""; songSrc.focus(); };
+
+function setSongStatus(text, cls) {
+  const el = document.getElementById("songstatus");
+  el.textContent = text;
+  el.className = cls || "";
+}
+
 const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene", c: "recalibrate" };
 const INS = ["saw", "organ", "strings", "bell", "flute", "pluck", "guitar"];
 document.addEventListener("keydown", (e) => {
   if (e.repeat) return;
+  // Not while typing. Every letter here is a shortcut, so without this a
+  // pasted link fires record, loop, granular and mute on its way in.
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" && t.type === "text" || t.tagName === "TEXTAREA")) return;
   const k = e.key.toLowerCase();
   if (KEYS[k]) { sendEvent(KEYS[k]); e.preventDefault(); }
   else if (k >= "1" && k <= "7") sendEvent("instrument:" + INS[+k - 1]);
@@ -725,6 +796,11 @@ function render(s) {
   document.querySelectorAll("[data-ins]").forEach((b) =>
     b.classList.toggle("on", b.dataset.ins === s.instrument));
   $("loopinfo").textContent = s.loop_secs ? "loop: " + s.loop_secs.toFixed(1) + "s" : "no loop yet";
+  if (s.song_status !== undefined) {
+    const txt = s.song_status || "";
+    setSongStatus(txt, s.song_busy ? "busy"
+                     : txt.startsWith("failed") ? "bad" : txt ? "ok" : "");
+  }
   $("recinfo").textContent = s.recording ? "● REC" : "";
 }
 </script>

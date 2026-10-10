@@ -67,6 +67,9 @@ class GloveSource:
         # to be collected. Same idea as the event queue: produced here, taken
         # exactly once by whoever is driving the synth.
         self.audio: tuple = None
+        # A song the player asked for from the UI, waiting to be loaded.
+        # Same contract as `audio`: produced here, taken exactly once.
+        self.song: str | None = None
         self._running = False
 
     def drain_events(self) -> list[str]:
@@ -81,6 +84,11 @@ class GloveSource:
         """Collect a pending glove recording, or None. Clears it."""
         audio, self.audio = self.audio, None
         return audio
+
+    def take_song(self) -> str | None:
+        """Collect a pending song request (path or URL), or None. Clears it."""
+        song, self.song = self.song, None
+        return song
 
     @staticmethod
     def _step(prev: SensorFrame, tgt: SensorFrame, k: float, dt: float) -> SensorFrame:
@@ -182,6 +190,11 @@ class MergedGloveSource(GloveSource):
                 got = source.take_audio()
                 if got is not None:
                     self.audio = got
+                # The browser is the control half, so a song typed into the
+                # page arrives on that child and has to be forwarded up.
+                want = source.take_song()
+                if want is not None:
+                    self.song = want
             time.sleep(dt)
 
 
