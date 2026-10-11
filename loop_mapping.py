@@ -204,6 +204,8 @@ def handle_event(event: str, synth: GloveSynth,
         synth.toggle_live()
     elif event == "loop":
         synth.toggle_loop()
+    elif event == "freeze":
+        synth.toggle_freeze()
     elif event == "reverse":
         synth.toggle_reverse()
     elif event == "pitchlock":

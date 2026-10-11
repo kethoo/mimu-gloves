@@ -340,6 +340,7 @@
         <button data-ev="loop" id="b-loop">🔁 loop (p)</button>
         <button data-ev="granular" id="b-granular">✨ granular (g)</button>
         <button data-ev="slices" id="b-slices">🥁 slices (b)</button>
+        <button data-ev="freeze" id="b-freeze">❄ freeze (f)</button>
         <button data-ev="reverse" id="b-reverse">◀ reverse (j)</button>
         <button data-ev="pitchlock" id="b-pitchlock">🎚 pitch only (k)</button>
         <button data-ev="mute" id="b-drone">🔊 instrument (m)</button>
@@ -526,7 +527,7 @@ function setSongStatus(text, cls) {
   el.className = cls || "";
 }
 
-const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene", c: "recalibrate", j: "reverse", k: "pitchlock" };
+const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene", c: "recalibrate", f: "freeze", j: "reverse", k: "pitchlock" };
 const INS = ["saw", "organ", "strings", "bell", "flute", "pluck", "guitar"];
 document.addEventListener("keydown", (e) => {
   if (e.repeat) return;
@@ -849,6 +850,7 @@ function render(s) {
   $("b-loop").classList.toggle("on", !!s.loop);
   $("b-granular").classList.toggle("on", !!s.granular);
   $("b-slices").classList.toggle("on", !!s.slices);
+  $("b-freeze").classList.toggle("on", !!s.frozen);
   $("b-reverse").classList.toggle("on", !!s.reverse);
   $("b-pitchlock").classList.toggle("on", !!s.pitch_lock);
   // Lit when the synth is actually in the mix. Loading a record mutes it,

@@ -315,6 +315,7 @@ then drag the pad and move the sliders.
 | --- | --- |
 | `flex1 -` in the status line | That channel has not swung 80 ADC counts yet. Bend the finger fully a few times |
 | Postures do nothing | Both flex channels must be calibrated — if either shows `-`, no posture can fire |
+| Stuck on FROZEN | Freeze is set by a fist and cleared by an open hand, so a dead flex channel can leave it on with no gesture to escape. Press `f`, or the ❄ button |
 | Orientation frozen, warning printed | The BNO08x has stalled. The link is fine; check its 3V3 and SDA/SCL |
 | Sound from the wrong device | Audio binds when the stream opens. Restart, or pass `--audio-out` |
 | Glove not found | `python main.py --scan`. Boards advertise as `MIMU-GLOVE-I` / `-V` |

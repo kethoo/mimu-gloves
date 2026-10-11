@@ -581,6 +581,16 @@ class GloveSynth:
         is the thing the two chains were split up to prevent."""
         return self._loop_buf is not None and len(self._loop_buf) > 1
 
+    def toggle_freeze(self) -> None:
+        """Manual freeze toggle, for when the gesture cannot reach it.
+
+        Freeze is set by a fist and cleared by an open hand, both of which
+        need working flex sensors. A glove with a dead flex channel can
+        therefore be frozen with no way back — the state is only escapable
+        by the one gesture that hand can no longer make.
+        """
+        self.set_freeze(not self.freeze_on)
+
     def toggle_reverse(self) -> None:
         """Play the loop backwards. Free: the reader indexes modulo the
         buffer length, so a negative rate simply walks the other way."""
