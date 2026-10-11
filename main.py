@@ -303,9 +303,16 @@ def main() -> None:
                 live_name, label="live glove", managed=True
             )
             voice_source = BleGloveSource(
-                loop_name, tag="V:", label="loop glove", managed=True
+                loop_name, tag="V:", label="loop glove", managed=True,
+                # The left glove's board is mounted the other way round.
+                # --no-flip-loop if you remount it to match the right one.
+                flip="--no-flip-loop" not in sys.argv,
             )
             print("Connecting to BOTH gloves over BLE...")
+            print("  live glove = RIGHT hand, loop glove = LEFT hand "
+                  "(mic, button, LED)"
+                  + ("" if "--no-flip-loop" in sys.argv
+                     else "; left board treated as flipped"))
         else:
             glove = BleGloveSource(live_name, label="glove")
             print(f"Connecting to '{live_name}' over BLE...")

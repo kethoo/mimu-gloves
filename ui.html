@@ -270,8 +270,10 @@
 </header>
 
 <section class="hands" id="hands" hidden>
-  <div class="hcard" id="c-live"></div>
+  <!-- Laid out as you wear them: the loop glove is on the LEFT hand (it
+       carries the mic, button and LED), so it is the left-hand card. -->
   <div class="hcard" id="c-loop"></div>
+  <div class="hcard" id="c-live"></div>
 </section>
 <div class="tog" id="tog" hidden></div>
 
@@ -598,7 +600,11 @@ function handSVG(h, mirror, colour){
                viewBox="0 0 ${W} ${H}">
     <g transform="translate(${W/2},${H*0.62}) rotate(${(mirror?-1:1)*(h.roll||0)*0.45}) translate(${-W/2},${-H*0.62})">
     <g ${mirror?`transform="translate(${W},0) scale(-1,1)"`:""}>
-      ${f(34,rest,false)}${f(56,idx,true)}${f(78,mid,true)}${f(100,rest,false)}
+      <!-- Drawn thumb-side first, so these four are index, middle, ring,
+           pinky. The sensors are taped to the index and middle, so those
+           are the two that bend; animating the middle pair made a bend
+           look like it was happening on the wrong fingers. -->
+      ${f(34,idx,true)}${f(56,mid,true)}${f(78,rest,false)}${f(100,rest,false)}
       <g transform="translate(28,100) rotate(${-34+rest.rot*0.45})">
         <rect x="-7.9" y="-32" width="15.8" height="42" rx="7.9" fill="${skin}"/></g>
       <rect x="26" y="61" width="80" height="61" rx="19" fill="${skin}"/>
@@ -703,7 +709,7 @@ function drawHand(el, h, opts){
         .map(b=>`<span class="hb ${b[1]||""}">${b[0]}</span>`).join("")}</div>`;
 }
 const LIVE_OPTS = {
-  title:ICON_LIVE + "<span>Live hand</span>", mirror:false,
+  title:ICON_LIVE + "<span>Live hand · right</span>", mirror:false,
   big: h => !h.linked ? "searching" : (POSTURE_LABEL[h.posture] || h.note || "—"),
   sub: h => !h.linked ? "no glove" :
             `${h.scene} · scene ${h.scene_n}/${h.scene_total}${h.gate?"":" · muted"}`,
@@ -714,7 +720,7 @@ const LIVE_OPTS = {
   badges: h => [[h.gate?"sound on":"muted", h.gate?"on":""], ...flexBadges(h)],
 };
 const LOOP_OPTS = {
-  title:ICON_LOOP + "<span>Loop hand</span>", mirror:true,
+  title:ICON_LOOP + "<span>Loop hand · left</span>", mirror:true,
   big: h => !h.linked ? "searching" : h.frozen ? "FROZEN"
             : (POSTURE_LABEL[h.posture] || (h.mode==="granular" ? "SCRUBBING" : "LOOP")),
   sub: h => !h.linked ? "no glove"
@@ -724,7 +730,8 @@ const LOOP_OPTS = {
               ["speed", ((Math.log2(h.speed||1)+1)/2), (h.speed||1).toFixed(2)+"x"],
               ["reverb", h.reverb||0, Math.round((h.reverb||0)*100)+"%"],
               ["blend", h.blend||0, Math.round((h.blend||0)*100)+"%"]],
-  badges: h => [[h.preset, "on"], [h.mode, h.mode!=="normal"?"on":""],
+  badges: h => [["mic · button", ""], [h.preset, "on"],
+                [h.mode, h.mode!=="normal"?"on":""],
                 ...(h.delay?[["delay","on"]]:[]), ...(h.frozen?[["FROZEN","hot"]]:[]),
                 ...flexBadges(h)],
 };

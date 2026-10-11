@@ -8,6 +8,25 @@ The two hands are deliberately asymmetric. One **makes sound**; the other
 there is exactly one of each parameter in the instrument — one filter, one
 reverb, one scrub, one pitch — each owned by exactly one hand.
 
+**Which glove goes on which hand**
+
+| | hand | board | carries |
+|---|---|---|---|
+| **Live hand** | right | `MIMU-GLOVE-I` | flex sensors + IMU |
+| **Loop hand** | left | `MIMU-GLOVE-V` | flex sensors + IMU, **microphone, button, LED** |
+
+The microphone, button and LED are only on the left glove, so recording and
+the scene button are left-hand jobs. The panel lays the two cards out the
+way you wear them: left glove on the left, right glove on the right.
+
+The left glove's board is mounted the other way round, so the receiver
+inverts its roll and tilt — without that, rolling your left wrist moves the
+on-screen hand the wrong way. If you ever remount it to match the right
+one, pass `--no-flip-loop`.
+
+On both gloves the flex sensors are on the **index** and **middle** fingers,
+and those are the two fingers the on-screen hand bends.
+
 ---
 
 ## Starting up

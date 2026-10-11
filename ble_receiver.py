@@ -252,8 +252,17 @@ class BleGloveSource(GloveSource):
     """
 
     def __init__(self, name: str = DEVICE_NAME, tag: str = "",
-                 label: str | None = None, managed: bool = False) -> None:
+                 label: str | None = None, managed: bool = False,
+                 flip: bool = False) -> None:
         super().__init__()
+        # The board on the other hand is mounted the other way round, so the
+        # same wrist movement comes back with the opposite sign and the
+        # panel draws the hand rolling away from where it really went.
+        # Rotating the board 180 degrees about its vertical axis - which is
+        # what you do to keep the USB pointing up the arm on both hands -
+        # inverts roll and pitch. Yaw also shifts by 180, but the baseline
+        # captured at connect subtracts a constant, so that one cancels.
+        self.flip = flip
         self.name = name
         self.tag = tag
         self.label = label or name
@@ -504,6 +513,11 @@ class BleGloveSource(GloveSource):
             _wrap(pitch - self._offset[1]),
             _wrap(yaw - self._offset[2]),
         )
+        if self.flip:
+            # After the baseline, not before: the offset is measured in the
+            # board's own frame, so flipping first would subtract the zero
+            # pose with the wrong sign and leave the hand off-centre.
+            raw = (-raw[0], -raw[1], raw[2])
         for i in range(3):
             self._smoothed[i] = ALPHA * self._smoothed[i] + (1 - ALPHA) * raw[i]
         r, p, y = self._smoothed
