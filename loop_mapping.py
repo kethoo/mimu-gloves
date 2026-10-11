@@ -148,8 +148,16 @@ def apply(frame: SensorFrame, synth: GloveSynth,
     # gesture pitches the microphone when there is no loop to play. Only one
     # of the two is ever audible, so this is one control, not two.
     u = 2.0 * _norm(frame.pitch, PITCH_RANGE) - 1.0
-    synth.target_rate = 2.0 ** (RATE_OCTAVES * u)
-    synth.target_voice_pitch = synth.target_rate
+    if synth.pitch_lock:
+        # Pitch without tempo: the loop runs at its own speed and the
+        # granular shifter does the transposing. Varispeed welds the two
+        # together, so slowing a track always dropped its key and there was
+        # no way to ask for one without the other.
+        synth.target_rate = 1.0
+        synth.target_voice_pitch = 2.0 ** (RATE_OCTAVES * u)
+    else:
+        synth.target_rate = 2.0 ** (RATE_OCTAVES * u)
+        synth.target_voice_pitch = synth.target_rate
 
     # Yaw -> where the captured material sits, independent of the live hand's
     # pan for the instrument.
@@ -190,3 +198,7 @@ def handle_event(event: str, synth: GloveSynth,
         synth.toggle_live()
     elif event == "loop":
         synth.toggle_loop()
+    elif event == "reverse":
+        synth.toggle_reverse()
+    elif event == "pitchlock":
+        synth.toggle_pitch_lock()

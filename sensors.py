@@ -209,6 +209,7 @@ class SimulatedGloveSource(GloveSource):
     g   = granular mode        b = slice mode on/off
     m   = mute/unmute drone    r = reset to neutral
     c   = recalibrate the flex sensors
+    j   = play the loop backwards   k = tilt pitches without changing speed
     h   = switch hand (instrument <-> voice)    x = quit
 
     Bend both fingers for a fist (sound on), straighten both for an open
@@ -283,6 +284,10 @@ class SimulatedGloveSource(GloveSource):
                     self.events.append(tag + "scene")
                 elif c == "c":
                     self.events.append(tag + "recalibrate")
+                elif c == "j":
+                    self.events.append(tag + "reverse")
+                elif c == "k":
+                    self.events.append(tag + "pitchlock")
                 elif c in "[]":
                     # index finger bend: volume, and half of every posture
                     t.flex = min(max((t.flex or 0.0) + (0.2 if c == "]" else -0.2), 0.0), 1.0)

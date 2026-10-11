@@ -570,6 +570,8 @@ def main() -> None:
                     "instrument": synth.instrument,
                     "drone": synth.drone_on, "loop": synth.loop_on,
                     "muted": synth.instrument_off,
+                    "reverse": synth.reverse,
+                    "pitch_lock": synth.pitch_lock,
                     "granular": synth.granular_on, "slices": synth.slices_on,
                     "recording": synth.is_recording,
                     "live": synth.live_on,

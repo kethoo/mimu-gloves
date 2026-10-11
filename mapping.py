@@ -84,6 +84,10 @@ PITCH_RANGE = 45.0  # degrees of tilt for the full scale, low to high
 YAW_RANGE = 45.0    # degrees of yaw for hard-left to hard-right pan
 
 CUTOFF_LO, CUTOFF_HI = 200.0, 6000.0
+# The record filter opens further than the instrument's: a track is full-range
+# material, so 6 kHz at the top would sound permanently muffled where the same
+# ceiling on a single oscillator sounds bright.
+VOICE_CUTOFF_HI = 18000.0
 
 # The scale quantizer remembers the step it last committed to, so a hand
 # parked on a boundary between two notes does not flutter between them.
@@ -266,6 +270,14 @@ def apply(frame: SensorFrame, synth: GloveSynth,
 
     # point left/right -> pan
     synth.target_pan = 2.0 * _norm(frame.yaw, YAW_RANGE) - 1.0
+
+    # Roll also sweeps a lowpass over a loaded record — this hand's one job
+    # on someone else's recording, and the classic filter sweep. Only over a
+    # record: on a live mic it would mean this hand reshaping the other
+    # hand's voice, which is exactly what the split chains prevent.
+    synth.target_voice_cutoff = (
+        CUTOFF_LO * math.exp(roll_u * math.log(VOICE_CUTOFF_HI / CUTOFF_LO))
+        if synth.has_record else 20000.0)
 
     # index finger bend -> volume, like a breath controller. Without a flex
     # sensor connected, fall back to movement energy.

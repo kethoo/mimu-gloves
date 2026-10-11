@@ -63,6 +63,7 @@ effect.**
 | ↕️ **Tilt up/down** | Musical pitch | Quantized to the scene's scale. ±45° covers the full range |
 | ↪️ **Rotate wrist** | Brightness | Filter cutoff, 200 Hz → 6 kHz, follows the note so low tilt never buries high pitches |
 | 👈 **Point left/right** | Stereo pan | |
+| 🔄 **Roll**, with a record loaded | Sweeps a lowpass over the record | The classic filter sweep. Only over a record, never over a live mic |
 | 🤏 **Index bend** | Volume | 34 dB curve, so the whole travel is audible |
 | **Middle bend** | Vibrato depth | |
 | **Move faster** | Hit velocity | Wrist flicks land harder when the hand is moving |
@@ -98,6 +99,9 @@ Everything about time and space. **This hand never plays a note.**
 | ↪️ **Rotate wrist** | **Scrub** the playhead | The signature gesture. In granular mode time is frozen and rolling walks through the recording |
 | ↕️ **Tilt up/down** | Loop speed | ±1 octave. Also pitches the mic when there is no loop |
 | 👈 **Point left/right** | Where the captured material sits | Independent of the live hand's pan |
+| 🔄 **Roll** | Seeks through the track | Works in every mode now, not only granular |
+| ◀ **`j` / reverse** | Plays the loop backwards | |
+| 🎚 **`k` / pitch only** | Tilt transposes without changing tempo | Off: tilt varispeeds, as a turntable does |
 | 🤏 **Index bend** | Blend live against looped | |
 | **Middle bend** | Reverb amount | The one reverb in the instrument |
 | **Move faster** | Delay feedback | Wave and the repeats ring on longer |

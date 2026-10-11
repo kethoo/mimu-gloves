@@ -13,6 +13,14 @@ import sounddevice as sd
 SAMPLE_RATE = 44100
 BLOCK = 256  # ~6 ms of audio per callback
 
+# How far the smoothed scrub has to move before the playhead jumps to it.
+# Low enough that a deliberate twist seeks immediately, high enough that
+# sensor noise on a still hand does not keep re-seeking and stuttering.
+SEEK_MIN_MOVE = 0.004
+SEEK_FADE = 0.006          # seconds of fade-in after a jump, to kill the click
+# Above this the voice lowpass is bypassed rather than run wide open.
+FILTER_OPEN = 15000.0
+
 GRAIN_LEN = int(0.09 * SAMPLE_RATE)   # granular mode: 90 ms grains...
 GRAIN_HOP = int(0.045 * SAMPLE_RATE)  # ...spawned every 45 ms (2x overlap)
 N_SLICES = 4                          # slice mode: recording split into 4 pads
@@ -204,6 +212,11 @@ class GloveSynth:
         # sets this, so the hands shape the record instead of playing a synth
         # over it; 'm' brings the instrument back to play along.
         self.instrument_off = False
+        # Playback direction, and the bookkeeping for roll-to-seek.
+        self.reverse = False
+        self.pitch_lock = False     # tilt moves pitch only, speed stays 1x
+        self._scrub_held = 0.5      # scrub value the playhead was last set to
+        self._seek_fade = 1.0       # 0..1 fade-in after a seek
         self.loop_on = False
         self.loop_label = "glove take"   # what the panel calls what is loaded
         self._loop_buf: np.ndarray | None = None
@@ -264,6 +277,13 @@ class GloveSynth:
         self.voice_fx_on = True       # fist on / open hand = dry
         self.voice_delay_on = False   # "point" toggles it
         self.target_voice_pitch = 1.0     # 0.5 (octave down) .. 2.0 (up)
+        # Lowpass over a loaded record, driven by the LIVE hand's roll: the
+        # one job that hand has on someone else's recording. Off by default
+        # and skipped entirely above FILTER_OPEN, so the per-sample loop it
+        # costs is only paid while the filter is actually doing something.
+        self.target_voice_cutoff = 20000.0
+        self._v_cutoff = 20000.0
+        self._v_lp = [0.0, 0.0]
         self.target_voice_reverb = 0.25   # 0..1 wet
         self.target_voice_pan = 0.0       # -1..+1
         self.target_voice_volume = 0.6    # 0..1
@@ -553,6 +573,35 @@ class GloveSynth:
         self.loop_on = not self.loop_on
         print("\n[voice loop on]" if self.loop_on else "\n[voice loop off]")
 
+    @property
+    def has_record(self) -> bool:
+        """True when the loop hand is shaping a recording rather than a live
+        mic. The live hand's filter is only allowed to touch the former: one
+        hand's brightness gesture silently reshaping the other hand's voice
+        is the thing the two chains were split up to prevent."""
+        return self._loop_buf is not None and len(self._loop_buf) > 1
+
+    def toggle_reverse(self) -> None:
+        """Play the loop backwards. Free: the reader indexes modulo the
+        buffer length, so a negative rate simply walks the other way."""
+        self.reverse = not self.reverse
+        self._seek_fade = 0.0       # direction change is a discontinuity too
+        print("\n[reverse]" if self.reverse else "\n[forward]")
+
+    def toggle_pitch_lock(self) -> None:
+        """Separate pitch from speed.
+
+        Normally tilt varispeeds the loop, so slowing a track also drops its
+        key - the two cannot be moved apart. Locked, the loop runs at 1x and
+        tilt drives the granular pitch shifter instead, which transposes
+        without changing the tempo.
+        """
+        self.pitch_lock = not self.pitch_lock
+        if not self.pitch_lock:
+            self.target_voice_pitch = 1.0
+        print("\n[tilt = pitch only, speed stays 1x]" if self.pitch_lock
+              else "\n[tilt = speed and pitch together]")
+
     def clear_loop(self) -> None:
         """Stop whatever is in the loop and throw it away.
 
@@ -622,15 +671,39 @@ class GloveSynth:
                 if self.granular_on:
                     voice = self._render_grains(buf, frames)
                 else:
-                    # Variable-rate loop (roll = speed & pitch), linear interp.
+                    # Variable-rate loop (tilt = speed & pitch), linear interp.
                     self._rate += (self.target_rate - self._rate) * k
-                    idx = (self._loop_pos + self._rate * np.arange(frames)) % len(buf)
+                    rate = -self._rate if self.reverse else self._rate
+
+                    # Roll seeks. It used to set target_scrub and then only
+                    # granular and slices ever read it, so in plain playback
+                    # the most obvious gesture on the hand did nothing at
+                    # all. Moving the wrist jumps the playhead; holding it
+                    # still lets the track run on from there, which is what
+                    # a hand on a record does.
+                    self._scrub += (self.target_scrub - self._scrub) * 0.25
+                    if abs(self._scrub - self._scrub_held) > SEEK_MIN_MOVE:
+                        self._scrub_held = self._scrub
+                        self._loop_pos = self._scrub * (len(buf) - 1)
+                        # Jumping mid-waveform is a step discontinuity, i.e.
+                        # a click. Fading back in over a few ms costs
+                        # nothing and is the difference between scrubbing
+                        # and a burst of static.
+                        self._seek_fade = 0.0
+
+                    idx = (self._loop_pos + rate * np.arange(frames)) % len(buf)
                     i0 = idx.astype(np.intp)
                     i1 = (i0 + 1) % len(buf)
                     frac = idx - i0
                     voice = buf[i0] * (1.0 - frac) + buf[i1] * frac
+                    if self._seek_fade < 1.0:
+                        step = 1.0 / max(SEEK_FADE * SAMPLE_RATE, 1.0)
+                        ramp = np.minimum(
+                            self._seek_fade + step * np.arange(frames), 1.0)
+                        voice = voice * ramp
+                        self._seek_fade = float(ramp[-1])
                     self._loop_pos = float(
-                        (self._loop_pos + self._rate * frames) % len(buf)
+                        (self._loop_pos + rate * frames) % len(buf)
                     )
             shot = self._render_shot(buf, frames)
             if shot is not None:
@@ -917,6 +990,7 @@ class GloveSynth:
             return y * self._v_vol
 
         y = self._pitch_shift(y, frames, self._v_pitch)
+        y = self._voice_filter(y, frames)
         y = self._stutter(y, frames)
         if self.voice_delay_on:
             y = self._voice_delay(y, frames)
@@ -924,6 +998,29 @@ class GloveSynth:
             wet = self._reverb(y, frames)
             y = y * (1.0 - 0.6 * self._v_reverb) + wet * self._v_reverb
         return y * self._v_vol
+
+    def _voice_filter(self, x: np.ndarray, frames: int) -> np.ndarray:
+        """Two-pole lowpass on the loop hand's material.
+
+        Two poles, not the instrument's four: this runs a Python loop per
+        sample on top of the one the ladder already costs, and -12 dB/oct is
+        plenty for a sweep across a record. Wide open it is skipped, so an
+        untouched filter costs a comparison.
+        """
+        self._v_cutoff += (self.target_voice_cutoff - self._v_cutoff) * 0.15
+        if self._v_cutoff >= FILTER_OPEN:
+            self._v_lp = [0.0, 0.0]
+            return x
+        fc = min(self._v_cutoff, 0.45 * SAMPLE_RATE)
+        a = min(1.0 - np.exp(-2.0 * np.pi * fc / SAMPLE_RATE), 0.9)
+        y1, y2 = self._v_lp
+        out = np.empty(frames)
+        for i in range(frames):
+            y1 += a * (x[i] - y1)
+            y2 += a * (y1 - y2)
+            out[i] = y2
+        self._v_lp = [y1, y2]
+        return out
 
     def _render_tone(self, frames: int) -> np.ndarray:
         """One block of the selected instrument at the current frequency.
