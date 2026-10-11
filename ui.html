@@ -338,7 +338,7 @@
         <button data-ev="loop" id="b-loop">🔁 loop (p)</button>
         <button data-ev="granular" id="b-granular">✨ granular (g)</button>
         <button data-ev="slices" id="b-slices">🥁 slices (b)</button>
-        <button data-ev="mute" id="b-drone">🔊 drone (m)</button>
+        <button data-ev="mute" id="b-drone">🔊 instrument (m)</button>
         <button data-ev="live" id="b-live" class="rec">🎤 live voice (l)</button>
       </div>
       <button id="punch">👊 PUNCH (space)</button>
@@ -378,6 +378,9 @@
         plays through your own instruments. Tilt then transposes the tune
         instead of picking a note, the loop hand pulls the tempo, and the
         posture that changes instrument changes what is playing it.
+        Loading a record <b>mutes the synth</b>, so your hands shape the
+        record rather than playing over it — <kbd>m</kbd> brings the
+        instrument back if you want to solo on top.
         <b>Eject</b> stops it and empties the buffer; <kbd>p</kbd> just
         pauses. Reloading this page does not stop anything — the sound comes
         from the python process, and this is only a window onto it.
@@ -813,7 +816,11 @@ function render(s) {
   $("b-loop").classList.toggle("on", !!s.loop);
   $("b-granular").classList.toggle("on", !!s.granular);
   $("b-slices").classList.toggle("on", !!s.slices);
+  // Lit when the synth is actually in the mix. Loading a record mutes it,
+  // so this is the control that says "play over the track" or "don't".
   $("b-drone").classList.toggle("on", !!s.drone);
+  $("b-drone").textContent = s.muted ? "🔇 instrument off (m)"
+                                     : "🔊 instrument (m)";
   $("b-live").classList.toggle("on", !!s.live);
   document.querySelector("[data-ev=record]").classList.toggle("on", !!s.recording);
   document.querySelectorAll("[data-ins]").forEach((b) =>

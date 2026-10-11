@@ -412,6 +412,7 @@ def main() -> None:
                 seconds=float(_flag_value("--song-seconds") or 0.0) or None,
             )
             synth.set_loop(samples, rate, label=song_name)
+            synth.mute_instrument(True)
             song_state["status"] = f"{song_name} — {len(samples) / rate:.0f}s"
         except Exception as exc:
             # A bad path or a dead link should not cost you the instrument:
@@ -493,6 +494,7 @@ def main() -> None:
                 if event.endswith("song_clear"):
                     synth.clear_loop()
                     seq = None
+                    synth.mute_instrument(False)
                     song_state["status"] = ""
                     song_name = None
                     continue
@@ -534,6 +536,9 @@ def main() -> None:
 
                 seq = melody_mod.Sequencer(new_mel)
                 synth.clear_loop()   # a tune and a record at once is mud
+                # The tune is played BY the instrument, so a mute left over
+                # from a previous record would make it silent.
+                synth.mute_instrument(False)
             loaded = song_state.pop("loaded", None)
             if loaded is not None:
                 # Installed here, on the thread that owns the synth, rather
@@ -541,6 +546,13 @@ def main() -> None:
                 # audio callback is reading.
                 synth.set_loop(loaded[0], loaded[1], label=loaded[2])
                 song_name = loaded[2]
+                # You loaded a record to work on the record. The synth
+                # droning over it is almost never what you wanted, and
+                # until now you could not keep it off: every playing
+                # gesture reopened its gate. 'm' brings it back to play
+                # along on top.
+                synth.mute_instrument(True)
+                seq = None
             publish = getattr(source, "publish", None)
             if publish is not None:
                 live_p = hand.posture
@@ -550,6 +562,7 @@ def main() -> None:
                     "yaw": frame.yaw, "motion": frame.motion,
                     "instrument": synth.instrument,
                     "drone": synth.drone_on, "loop": synth.loop_on,
+                    "muted": synth.instrument_off,
                     "granular": synth.granular_on, "slices": synth.slices_on,
                     "recording": synth.is_recording,
                     "live": synth.live_on,

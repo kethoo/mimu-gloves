@@ -200,6 +200,10 @@ class GloveSynth:
         # launch it is just noise you have to go and switch off — a fist, a
         # bent finger or `m` starts it.
         self.drone_on = False
+        # Muted on purpose, as opposed to merely gated off. Loading a record
+        # sets this, so the hands shape the record instead of playing a synth
+        # over it; 'm' brings the instrument back to play along.
+        self.instrument_off = False
         self.loop_on = False
         self.loop_label = "glove take"   # what the panel calls what is loaded
         self._loop_buf: np.ndarray | None = None
@@ -378,10 +382,29 @@ class GloveSynth:
     def set_gate(self, on: bool) -> None:
         """Fist activates the sound, an open hand deactivates it. Distinct
         from toggle_drone only in being absolute rather than a toggle, which
-        is what a posture needs: holding a fist must always mean 'on'."""
+        is what a posture needs: holding a fist must always mean 'on'.
+
+        Silenced deliberately, it stays silenced. Without that, muting the
+        instrument to hear a loaded track lasted until the next gesture:
+        bending the index finger to set the track's volume re-opened the
+        gate and the synth came straight back over the top of the music.
+        """
+        if self.instrument_off:
+            return
         if on != self.drone_on:
             self.drone_on = on
             print("\n[sound ON]" if on else "\n[sound OFF — make a fist, or just play]")
+
+    def mute_instrument(self, off: bool) -> None:
+        """Silence the synth itself, as opposed to closing the gate.
+
+        The two are different intentions: a gate is part of playing, and
+        every playing gesture may reopen it, while this is a decision about
+        whether the instrument is in the piece at all.
+        """
+        self.instrument_off = bool(off)
+        if off:
+            self.drone_on = False
 
     @property
     def is_recording(self) -> bool:
@@ -549,8 +572,13 @@ class GloveSynth:
         print("\n[loop cleared]")
 
     def toggle_drone(self) -> None:
-        self.drone_on = not self.drone_on
-        print("\n[drone on]" if self.drone_on else "\n[drone muted]")
+        # 'm' is the deliberate decision, so it owns instrument_off. A gate
+        # gesture can no longer undo it; only another press of 'm' can.
+        self.mute_instrument(not self.instrument_off)
+        if not self.instrument_off:
+            self.drone_on = True
+        print("\n[instrument on]" if self.drone_on
+              else "\n[instrument muted — press m to bring it back]")
 
     def toggle_live(self) -> None:
         if not self._has_input:
