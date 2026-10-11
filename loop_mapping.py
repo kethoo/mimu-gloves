@@ -158,6 +158,12 @@ def apply(frame: SensorFrame, synth: GloveSynth,
     else:
         synth.target_rate = 2.0 ** (RATE_OCTAVES * u)
         synth.target_voice_pitch = synth.target_rate
+    # The preset's offset rides on top of whatever tilt is asking for, so a
+    # preset colours the hand rather than overriding it. It was being stored
+    # and never read, which left Chipmunk and Demon - the two presets whose
+    # whole point is the pitch - sounding identical to the plain ones.
+    if st.preset_semitones:
+        synth.target_voice_pitch *= 2.0 ** (st.preset_semitones / 12.0)
 
     # Yaw -> where the captured material sits, independent of the live hand's
     # pan for the instrument.
