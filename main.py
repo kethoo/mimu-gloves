@@ -287,6 +287,9 @@ def main() -> None:
         list_audio_devices()
         return
     voice_source = None
+    live_side = (_flag_value("--live-side") or "left").lower()
+    if live_side not in ("left", "right"):
+        live_side = "left"
     if "--ble" in sys.argv:
         from ble_receiver import BleGloveSource, run_gloves
 
@@ -299,20 +302,36 @@ def main() -> None:
             "MIMU-GLOVE-I" if two else BleGloveSource.__init__.__defaults__[0])
         loop_name = _flag_value("--loop-name") or "MIMU-GLOVE-V"
         if two:
+            # Which glove you wear on which hand is a property of your
+            # build, not of the code, so it is an option rather than a
+            # constant. It decides two things at once: which card the
+            # panel draws on the left, and which board gets its
+            # orientation inverted, since the board on the left hand is
+            # the one mounted the other way round.
+            live_side = (_flag_value("--live-side") or "left").lower()
+            if live_side not in ("left", "right"):
+                print(f"[--live-side {live_side}? expected left or right; "
+                      "assuming left]")
+                live_side = "left"
+            loop_side = "right" if live_side == "left" else "left"
+
+            flip_which = (_flag_value("--flip-hand") or "auto").lower()
+            if flip_which == "auto":
+                flip_which = "live" if live_side == "left" else "loop"
             glove = BleGloveSource(
-                live_name, label="live glove", managed=True
+                live_name, label="live glove", managed=True,
+                flip=flip_which == "live",
             )
             voice_source = BleGloveSource(
                 loop_name, tag="V:", label="loop glove", managed=True,
-                # The left glove's board is mounted the other way round.
-                # --no-flip-loop if you remount it to match the right one.
-                flip="--no-flip-loop" not in sys.argv,
+                flip=flip_which == "loop",
             )
             print("Connecting to BOTH gloves over BLE...")
-            print("  live glove = RIGHT hand, loop glove = LEFT hand "
-                  "(mic, button, LED)"
-                  + ("" if "--no-flip-loop" in sys.argv
-                     else "; left board treated as flipped"))
+            print(f"  live glove = {live_side.upper()} hand, "
+                  f"loop glove = {loop_side.upper()} hand (mic, button, LED)")
+            print(f"  orientation flipped on: {flip_which}"
+                  + ("  [--flip-hand none|live|loop to change]"
+                     if flip_which != "none" else ""))
         else:
             glove = BleGloveSource(live_name, label="glove")
             print(f"Connecting to '{live_name}' over BLE...")
@@ -592,6 +611,7 @@ def main() -> None:
                     "hardware": "--ble" in sys.argv,
                     # ---- the two-hand panel -------------------------------
                     "two_hands": two_hands,
+                    "live_side": live_side,
                     "live_hand": _hand_state(frame, glove_src, live_p, st=hand, extra={
                         "note": _note_name(synth.target_freq),
                         # Where the note sits in the scene's scale, so the

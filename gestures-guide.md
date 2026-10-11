@@ -12,17 +12,26 @@ reverb, one scrub, one pitch — each owned by exactly one hand.
 
 | | hand | board | carries |
 |---|---|---|---|
-| **Live hand** | right | `MIMU-GLOVE-I` | flex sensors + IMU |
-| **Loop hand** | left | `MIMU-GLOVE-V` | flex sensors + IMU, **microphone, button, LED** |
+| **Live hand** | left | `MIMU-GLOVE-I` | flex sensors + IMU, **microphone, button, LED** |
+| **Loop hand** | right | `MIMU-GLOVE-V` | flex sensors + IMU |
 
-The microphone, button and LED are only on the left glove, so recording and
-the scene button are left-hand jobs. The panel lays the two cards out the
-way you wear them: left glove on the left, right glove on the right.
+That is the default, not a fact about the code. Which glove you wear on
+which hand is a property of your build, so it is an option:
 
-The left glove's board is mounted the other way round, so the receiver
-inverts its roll and tilt — without that, rolling your left wrist moves the
-on-screen hand the wrong way. If you ever remount it to match the right
-one, pass `--no-flip-loop`.
+```bash
+python main.py --ble --voice-glove --web --live-side right
+```
+
+`--live-side` decides two things at once: which card the panel draws on the
+left, and which board has its orientation inverted — the board worn on the
+left hand is mounted the other way round, and without that inversion
+rolling that wrist moves the on-screen hand backwards. Override the
+inversion on its own with `--flip-hand none|live|loop` if you remount a
+board.
+
+The microphone, button and LED are wired on one glove only, the one worn on
+the left, so recording and the scene button are left-hand jobs. The panel
+marks that card with a **mic · button** badge.
 
 On both gloves the flex sensors are on the **index** and **middle** fingers,
 and those are the two fingers the on-screen hand bends.

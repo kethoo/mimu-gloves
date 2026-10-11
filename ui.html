@@ -270,10 +270,10 @@
 </header>
 
 <section class="hands" id="hands" hidden>
-  <!-- Laid out as you wear them: the loop glove is on the LEFT hand (it
-       carries the mic, button and LED), so it is the left-hand card. -->
-  <div class="hcard" id="c-loop"></div>
+  <!-- Order is set at runtime from live_side, because which glove goes on
+       which hand is a property of the build, not of this file. -->
   <div class="hcard" id="c-live"></div>
+  <div class="hcard" id="c-loop"></div>
 </section>
 <div class="tog" id="tog" hidden></div>
 
@@ -733,8 +733,7 @@ const LOOP_OPTS = {
               ["speed", ((Math.log2(h.speed||1)+1)/2), (h.speed||1).toFixed(2)+"x"],
               ["reverb", h.reverb||0, Math.round((h.reverb||0)*100)+"%"],
               ["blend", h.blend||0, Math.round((h.blend||0)*100)+"%"]],
-  badges: h => [["mic · button", ""], [h.preset, "on"],
-                [h.mode, h.mode!=="normal"?"on":""],
+  badges: h => [[h.preset, "on"], [h.mode, h.mode!=="normal"?"on":""],
                 ...(h.delay?[["delay","on"]]:[]), ...(h.frozen?[["FROZEN","hot"]]:[]),
                 ...flexBadges(h)],
 };
@@ -750,8 +749,24 @@ function renderPanel(s){
   $("hands").hidden = !show; $("tog").hidden = !show;
   if (!show) return;
   s.live_hand._id = "live"; s.loop_hand._id = "loop";
-  drawHand($("c-live"), s.live_hand, LIVE_OPTS);
-  drawHand($("c-loop"), s.loop_hand, LOOP_OPTS);
+  // Lay the cards out the way the gloves are worn, and mirror each drawing
+  // to match its hand: a left hand has its thumb on the right.
+  const liveLeft = (s.live_side || "left") === "left";
+  const host = $("hands");
+  const first = liveLeft ? $("c-live") : $("c-loop");
+  if (host.firstElementChild !== first) host.insertBefore(first, host.firstElementChild);
+  // The mic, button and LED are wired on one glove only, and it is the
+  // one worn on the left — a fact about the build, so it follows the side
+  // rather than the role.
+  const onLeft = b => h => [...b(h), ["mic · button", ""]];
+  drawHand($("c-live"), s.live_hand,
+           {...LIVE_OPTS, mirror: liveLeft,
+            badges: liveLeft ? onLeft(LIVE_OPTS.badges) : LIVE_OPTS.badges,
+            title: ICON_LIVE + `<span>Live hand · ${liveLeft?"left":"right"}</span>`});
+  drawHand($("c-loop"), s.loop_hand,
+           {...LOOP_OPTS, mirror: !liveLeft,
+            badges: liveLeft ? LOOP_OPTS.badges : onLeft(LOOP_OPTS.badges),
+            title: ICON_LOOP + `<span>Loop hand · ${liveLeft?"right":"left"}</span>`});
   const t = $("tog");
   t.className = "tog" + (s.combo ? " on" : "");
   const wv = s.width == null ? 1 : s.width;
