@@ -601,7 +601,15 @@ function handSVG(h, mirror, colour){
   const SC = 1.34;   // drawn size vs. the coordinate system
   return `<svg width="${Math.round(W*SC)}" height="${Math.round(H*SC)}"
                viewBox="0 0 ${W} ${H}">
-    <g transform="translate(${W/2},${H*0.62}) rotate(${(mirror?-1:1)*(h.roll||0)*0.45}) translate(${-W/2},${-H*0.62})">
+    <!-- Rotation is NOT negated for a mirrored hand. The receiver already
+         inverts the flipped board's roll, so both hands arrive in the same
+         frame and a positive roll means the same physical direction on
+         either one; negating here as well turned that correction back off
+         and the left hand rolled the wrong way on screen. The mirror flag
+         flips the SHAPE only, so the thumb sits on the correct side.
+         (No backticks in here: this comment lives inside a JS template
+         literal, so one would end the string and break the whole script.) -->
+    <g transform="translate(${W/2},${H*0.62}) rotate(${(h.roll||0)*0.45}) translate(${-W/2},${-H*0.62})">
     <g ${mirror?`transform="translate(${W},0) scale(-1,1)"`:""}>
       <!-- Drawn thumb-side first, so these four are index, middle, ring,
            pinky. The sensors are taped to the index and middle, so those

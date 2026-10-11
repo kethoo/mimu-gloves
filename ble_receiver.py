@@ -56,10 +56,13 @@ ALPHA = 0.5
 # would come alive, so a normal bend never registered.
 FLEX_MIN_SPAN = 80.0
 FLEX_INVERT = True  # bending increases resistance -> lowers the divider voltage
-# Set True if the two sensors are wired to the opposite pins from what the
-# mapping expects — i.e. bending the index finger moves vibrato instead of
-# volume. Swapping here costs nothing and saves unpicking the glove.
-FLEX_SWAP = False
+# True on this build: the sensor on GPIO34 is taped to the MIDDLE finger and
+# the one on GPIO35 to the index, which is the opposite of what the mapping
+# and the panel assume. Swapping the two readings here is a line of code
+# where the alternative is unpicking the glove, and it means "flex1" means
+# the index finger everywhere downstream.
+# --no-swap-flex if you ever rewire the pins to match.
+FLEX_SWAP = True
 
 # Readings this low are electrically impossible for the real divider and mean
 # the connection dropped out, not that a finger bent. 3V3 -> flex -> pin ->
@@ -253,7 +256,7 @@ class BleGloveSource(GloveSource):
 
     def __init__(self, name: str = DEVICE_NAME, tag: str = "",
                  label: str | None = None, managed: bool = False,
-                 flip: bool = False) -> None:
+                 flip: bool = False, swap_flex: bool | None = None) -> None:
         super().__init__()
         # The board on the other hand is mounted the other way round, so the
         # same wrist movement comes back with the opposite sign and the
@@ -263,6 +266,7 @@ class BleGloveSource(GloveSource):
         # inverts roll and pitch. Yaw also shifts by 180, but the baseline
         # captured at connect subtracts a constant, so that one cancels.
         self.flip = flip
+        self.swap_flex = FLEX_SWAP if swap_flex is None else swap_flex
         self.name = name
         self.tag = tag
         self.label = label or name
@@ -554,7 +558,7 @@ class BleGloveSource(GloveSource):
                     self.events.append(self.tag + "scene")
                 self._presses = count
 
-        if FLEX_SWAP:
+        if self.swap_flex:
             flex_raw, flex2_raw = flex2_raw, flex_raw
 
         motion = min(speed / 400.0 + accel_mag / 30.0, 1.5)

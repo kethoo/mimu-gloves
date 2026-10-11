@@ -34,7 +34,12 @@ the left, so recording and the scene button are left-hand jobs. The panel
 marks that card with a **mic · button** badge.
 
 On both gloves the flex sensors are on the **index** and **middle** fingers,
-and those are the two fingers the on-screen hand bends.
+and those are the two fingers the on-screen hand bends. The sensor on GPIO34
+is taped to the middle finger and the one on GPIO35 to the index, which is
+the opposite of what the mapping assumes, so the receiver swaps the two
+readings — a line of code where the alternative is unpicking the glove. That
+is what makes "index bend" mean the index finger everywhere. If you rewire
+the pins to match, pass `--no-swap-flex`.
 
 ---
 

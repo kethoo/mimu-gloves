@@ -318,13 +318,14 @@ def main() -> None:
             flip_which = (_flag_value("--flip-hand") or "auto").lower()
             if flip_which == "auto":
                 flip_which = "live" if live_side == "left" else "loop"
+            swap_flex = "--no-swap-flex" not in sys.argv
             glove = BleGloveSource(
                 live_name, label="live glove", managed=True,
-                flip=flip_which == "live",
+                flip=flip_which == "live", swap_flex=swap_flex,
             )
             voice_source = BleGloveSource(
                 loop_name, tag="V:", label="loop glove", managed=True,
-                flip=flip_which == "loop",
+                flip=flip_which == "loop", swap_flex=swap_flex,
             )
             print("Connecting to BOTH gloves over BLE...")
             print(f"  live glove = {live_side.upper()} hand, "
