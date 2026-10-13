@@ -48,6 +48,12 @@ CONTROL_RATE = 100  # Hz
 # The patch being edited lives under this name, so auditioning is just
 # selecting an instrument — no separate preview path to keep in step.
 DESIGN_SLOT = "(designing)"
+# A string's decay and damping are fixed at the moment it is plucked, so the
+# only way to hear those sliders is to pluck again. Dragging fires every
+# 60 ms, and replucking that often is a rattle rather than a note, so the
+# retrigger is rate-limited to something that still reads as "it responded".
+RETRIGGER_MIN = 0.18
+_design_state = {"last": 0.0}
 
 
 def _handle_design(msg: dict, synth) -> None:
@@ -64,9 +70,28 @@ def _handle_design(msg: dict, synth) -> None:
     name = (msg.get("name") or "").strip()
     try:
         if op == "live" and isinstance(patch, dict):
-            synth.customs[DESIGN_SLOT] = instruments._clamp_patch(patch)
+            prev = synth.customs.get(DESIGN_SLOT)
+            new = instruments._clamp_patch(patch)
+            synth.customs[DESIGN_SLOT] = new
             if synth.instrument != DESIGN_SLOT:
                 synth.set_instrument(DESIGN_SLOT, announce=False)
+                return
+            # Already editing: swapping the patch alone is not enough. A
+            # plucked string only makes sound when something plucks it, so
+            # switching to that engine without a note-on left it silent —
+            # the delay line was never excited. Anything whose parameters
+            # are read at note-on has to be retriggered to be heard.
+            engine_changed = prev is None or prev["engine"] != new["engine"]
+            pluck_param = (
+                new["engine"] == "string"
+                and prev is not None
+                and prev["params"] != new["params"]
+            )
+            now = time.monotonic()
+            if engine_changed or (
+                    pluck_param and now - _design_state["last"] > RETRIGGER_MIN):
+                _design_state["last"] = now
+                synth._note_on()
         elif op == "save" and isinstance(patch, dict):
             instruments.save(name, patch)
             keep = synth.customs.get(DESIGN_SLOT)
