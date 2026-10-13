@@ -70,6 +70,9 @@ class GloveSource:
         # A song the player asked for from the UI, waiting to be loaded.
         # Same contract as `audio`: produced here, taken exactly once.
         self.song: str | None = None
+        # Instrument-designer traffic: {"kind": ..., ...}. Same contract as
+        # `song` — produced here, taken exactly once by the main loop.
+        self.design: dict | None = None
         self._running = False
 
     def drain_events(self) -> list[str]:
@@ -89,6 +92,11 @@ class GloveSource:
         """Collect a pending song request (path or URL), or None. Clears it."""
         song, self.song = self.song, None
         return song
+
+    def take_design(self) -> dict | None:
+        """Collect a pending instrument-designer message, or None."""
+        d, self.design = self.design, None
+        return d
 
     @staticmethod
     def _step(prev: SensorFrame, tgt: SensorFrame, k: float, dt: float) -> SensorFrame:
@@ -195,6 +203,9 @@ class MergedGloveSource(GloveSource):
                 want = source.take_song()
                 if want is not None:
                     self.song = want
+                d = source.take_design()
+                if d is not None:
+                    self.design = d
             time.sleep(dt)
 
 

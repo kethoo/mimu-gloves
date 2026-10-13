@@ -392,6 +392,25 @@
         from the python process, and this is only a window onto it.
       </div>
     </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="label">Design your own instrument</div>
+      <div class="btnrow" id="engines"></div>
+      <div class="hint" id="englabel" style="margin:8px 0 2px"></div>
+      <div id="knobs"></div>
+      <div class="btnrow" style="grid-template-columns:2fr 1fr 1fr; margin-top:10px">
+        <input id="insname" type="text" spellcheck="false" placeholder="name it">
+        <button id="inssave">save</button>
+        <button id="insstop">stop</button>
+      </div>
+      <div id="mine" class="hint" style="margin-top:8px"></div>
+      <div class="hint">
+        Editing auditions live — play while you drag. Saved instruments join
+        the list above and are picked by the same 🤚 posture, or keys
+        <kbd>1</kbd>–<kbd>9</kbd>. They live in <code>instruments.json</code>,
+        so they survive a restart.
+      </div>
+    </div>
   </div>
 </main>
 
@@ -543,6 +562,94 @@ document.addEventListener("keydown", (e) => {
 });
 
 
+
+
+// ---- instrument designer ------------------------------------------------
+// The form is built from a schema the backend publishes, so adding a knob
+// in instruments.py makes a slider appear here with no edit to this file.
+const DESIGN = {"engines": {"additive": {"label": "Additive \u2014 partials stacked over the fundamental", "params": {"p1": [1.0, 0.0, 1.0], "p2": [0.4, 0.0, 1.0], "p3": [0.15, 0.0, 1.0], "p4": [0.3, 0.0, 1.0], "p5": [0.05, 0.0, 1.0], "p6": [0.1, 0.0, 1.0], "noise": [0.0, 0.0, 0.3]}}, "saws": {"label": "Detuned saws \u2014 an ensemble, like the string pad", "params": {"voices": [4, 2, 6], "spread": [18.0, 2.0, 60.0]}}, "fm": {"label": "2-op FM \u2014 ratio decides metallic vs. warm", "params": {"ratio": [2.76, 0.5, 8.0], "index": [7.0, 0.0, 14.0], "index_decay": [2.0, 0.5, 6.0]}}, "string": {"label": "Plucked string \u2014 Karplus-Strong, like pluck and guitar", "params": {"t60": [2.0, 0.2, 8.0], "damping": [0.5, 0.0, 0.95], "pickup": [0.0, 0.0, 0.5], "drive": [0.0, 0.0, 20.0]}}}, "env": {"attack": [0.01, 0.001, 1.0], "decay": [0.3, 0.005, 4.0], "sustain": [0.72, 0.0, 1.0]}};
+let patch = null;
+
+function sendDesign(op, extra) {
+  if (connected) ws.send(JSON.stringify({type:"design", op, ...extra}));
+}
+function freshPatch(engine) {
+  const p = {engine, struck: engine === "fm" || engine === "string", params:{}};
+  for (const k in DESIGN.env) p[k] = DESIGN.env[k][0];
+  for (const k in DESIGN.engines[engine].params)
+    p.params[k] = DESIGN.engines[engine].params[k][0];
+  return p;
+}
+// knobRow, not row: there is already a function row() further down for the
+// gauge rows, and a second declaration in the same scope silently replaces
+// this one — it returns a string, so appendChild then fails on every knob.
+function knobRow(key, val, lo, hi, onchange, fmt) {
+  const d = document.createElement("div");
+  const step = (hi - lo) / 200;
+  d.innerHTML = `<div class="rowlabel"><span>${key}</span><b>${fmt(val)}</b></div>
+    <input type="range" min="${lo}" max="${hi}" step="${step}" value="${val}">`;
+  const b = d.querySelector("b"), r = d.querySelector("input");
+  r.addEventListener("input", () => {
+    const v = parseFloat(r.value); b.textContent = fmt(v); onchange(v);
+  });
+  return d;
+}
+function buildKnobs() {
+  const host = document.getElementById("knobs");
+  host.innerHTML = "";
+  document.getElementById("englabel").textContent =
+    DESIGN.engines[patch.engine].label;
+  for (const k in DESIGN.env) {
+    const [, lo, hi] = DESIGN.env[k];
+    host.appendChild(knobRow(k, patch[k], lo, hi,
+      v => { patch[k] = v; pushPatch(); },
+      v => k === "sustain" ? v.toFixed(2) : v.toFixed(3) + " s"));
+  }
+  const st = document.createElement("div");
+  st.className = "rowlabel";
+  st.innerHTML = `<span>struck (restarts from silence)</span>
+    <input type="checkbox" ${patch.struck ? "checked" : ""}>`;
+  st.querySelector("input").addEventListener("change", e => {
+    patch.struck = e.target.checked; pushPatch();
+  });
+  host.appendChild(st);
+  const ps = DESIGN.engines[patch.engine].params;
+  for (const k in ps) {
+    const [, lo, hi] = ps[k];
+    host.appendChild(knobRow(k, patch.params[k], lo, hi,
+      v => { patch.params[k] = v; pushPatch(); },
+      v => hi > 20 ? v.toFixed(1) : v.toFixed(2)));
+  }
+}
+let pushTimer = null;
+function pushPatch() {
+  // Coalesced: a slider drag fires continuously and every message would
+  // reinstall the patch the audio callback is reading.
+  if (pushTimer) return;
+  pushTimer = setTimeout(() => { pushTimer = null; sendDesign("live", {patch}); }, 60);
+}
+function pickEngine(engine) {
+  patch = freshPatch(engine);
+  buildKnobs(); pushPatch();
+  document.querySelectorAll("#engines button").forEach(
+    b => b.classList.toggle("on", b.dataset.eng === engine));
+}
+(function initDesigner(){
+  const host = document.getElementById("engines");
+  host.style.gridTemplateColumns = "repeat(4,1fr)";
+  for (const e in DESIGN.engines) {
+    const b = document.createElement("button");
+    b.textContent = e; b.dataset.eng = e;
+    b.onclick = () => pickEngine(e);
+    host.appendChild(b);
+  }
+  document.getElementById("inssave").onclick = () => {
+    const n = document.getElementById("insname").value.trim();
+    if (!n || !patch) { document.getElementById("insname").focus(); return; }
+    sendDesign("save", {name: n, patch});
+  };
+  document.getElementById("insstop").onclick = () => sendDesign("stop", {});
+})();
 
 // ---- theme --------------------------------------------------------------
 // Follows the system until you choose; after that your choice sticks. The
@@ -862,6 +969,18 @@ function render(s) {
   document.querySelector("[data-ev=record]").classList.toggle("on", !!s.recording);
   document.querySelectorAll("[data-ins]").forEach((b) =>
     b.classList.toggle("on", b.dataset.ins === s.instrument));
+  if (s.instrument_list) {
+    const mine = Object.keys(s.instrument_list).filter(
+      k => !document.querySelector(`[data-ins="${k}"]`) && k !== "(designing)");
+    const host = document.getElementById("mine");
+    host.innerHTML = mine.length
+      ? "yours: " + mine.map(n =>
+          `<button data-ins="${n}" style="padding:3px 9px;font-size:13px;margin:2px"
+            class="${n===s.instrument?"on":""}">${n}</button>`).join("")
+      : "nothing saved yet";
+    host.querySelectorAll("[data-ins]").forEach(b =>
+      b.onclick = () => sendEvent("instrument:" + b.dataset.ins));
+  }
   $("loopinfo").textContent = s.loop_secs ? "loop: " + s.loop_secs.toFixed(1) + "s" : "no loop yet";
   // A .mid plays through the instruments rather than the loop buffer, so
   // it gets its own readout: which note is sounding and how far in we are.

@@ -90,6 +90,12 @@ class WebGloveSource(GloveSource):
                         src = str(msg.get("src", "")).strip()
                         if src:
                             self.song = src
+                    elif kind == "design":
+                        # Carries a whole patch, so it cannot ride the event
+                        # queue. Validated on the main thread, where the
+                        # instrument store lives.
+                        self.design = {k: msg.get(k) for k in
+                                       ("op", "name", "patch")}
                     elif kind == "event":
                         name = msg.get("name", "")
                         if name in ALLOWED_EVENTS or name.startswith("instrument:"):

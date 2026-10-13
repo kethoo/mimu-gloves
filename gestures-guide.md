@@ -109,6 +109,22 @@ because otherwise this hand has nothing to do with someone else's recording.
 Instruments can also be picked directly with keys `1`–`7`: saw, organ,
 strings, bell, flute, pluck, guitar.
 
+**Designing your own.** The *Design your own instrument* panel builds one
+from the same four engines the built-ins are made of:
+
+| engine | what it is | built-ins using it |
+|---|---|---|
+| `additive` | six partials stacked over the fundamental | organ, flute |
+| `saws` | detuned saw ensemble | strings |
+| `fm` | two-operator FM — non-integer ratios sound metallic | bell |
+| `string` | Karplus-Strong plucked string | pluck, guitar |
+
+Pick an engine, drag the sliders — it auditions live, so play while you
+edit — then name it and save. Saved instruments join the list and are
+reached by the same 🤚 posture. They live in `instruments.json`, which is
+gitignored: they are yours, not the project's. Delete the file to start
+over.
+
 ---
 
 ## 🔁 Loop hand

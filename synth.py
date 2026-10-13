@@ -174,7 +174,11 @@ class GloveSynth:
         self._rate = 1.0
 
         self.instrument = "saw"
-        self._ph = [0.0, 0.0, 0.0, 0.0]  # phase accumulators (osc + partials)
+        # Phase accumulators: one per oscillator, kept across blocks so a
+        # pitch change does not restart a partial mid-cycle and click. Six,
+        # because a designed additive instrument stacks six partials; the
+        # built-ins use at most four.
+        self._ph = [0.0] * 6
         self._lfo = 0.0           # vibrato LFO phase (flute)
         self._vib = 0.0           # vibrato LFO phase (finger-controlled)
         self._vibDepth = 0.0      # smoothed depth
@@ -208,6 +212,11 @@ class GloveSynth:
         # launch it is just noise you have to go and switch off — a fist, a
         # bent finger or `m` starts it.
         self.drone_on = False
+        # Instruments you designed, loaded from instruments.json. Read before
+        # the first note, because envelope() consults it on every block.
+        import instruments as _instruments
+
+        self.customs = _instruments.load()
         # Muted on purpose, as opposed to merely gated off. Loading a record
         # sets this, so the hands shape the record instead of playing a synth
         # over it; 'm' brings the instrument back to play along.
@@ -368,7 +377,7 @@ class GloveSynth:
         same level.
         """
         self._pluck_env = min(max(self.target_hit, 0.0), 1.0)
-        if ENVELOPES[self.instrument][3]:
+        if self.envelope()[3]:
             self._note_on()
 
     def _note_on(self) -> None:
@@ -382,21 +391,52 @@ class GloveSynth:
         """
         self._env_stage = 0
         self._chiff = 1.0
-        if ENVELOPES[self.instrument][3]:
+        if self.envelope()[3]:
             self._env = 0.0
-            if self.instrument in KS_VOICES:
+            patch = self.custom
+            if self.instrument in KS_VOICES or (
+                    patch is not None and patch["engine"] == "string"):
                 self._ks_pluck()
 
+    @property
+    def custom(self) -> dict | None:
+        """The patch behind the selected instrument, or None for a built-in."""
+        return self.customs.get(self.instrument)
+
+    def envelope(self, name: str | None = None):
+        """(attack, decay, sustain, struck) for any instrument, built-in or
+        designed. One accessor so the callback never has to know which."""
+        name = name or self.instrument
+        patch = self.customs.get(name)
+        if patch is None:
+            return ENVELOPES.get(name, ENVELOPES["saw"])
+        return (patch["attack"], patch["decay"], patch["sustain"],
+                patch["struck"])
+
+    def reload_customs(self) -> None:
+        import instruments
+
+        self.customs = instruments.load()
+        if self.instrument not in INSTRUMENTS and self.instrument not in self.customs:
+            self.set_instrument("saw", announce=False)
+
+    def all_instruments(self) -> dict:
+        """Built-ins first, then yours — the order the point gesture walks."""
+        return {**INSTRUMENTS, **{k: k for k in sorted(self.customs)}}
+
     def set_instrument(self, name: str, announce: bool = True) -> None:
-        if name in INSTRUMENTS:
+        names = self.all_instruments()
+        if name in names:
             self.instrument = name
             self._note_on()  # so you hear the new instrument's attack
             if announce:
-                print(f"\n[instrument: {INSTRUMENTS[name]}]")
+                print(f"\n[instrument: {names[name]}]")
 
     def next_instrument(self) -> None:
         """Step to the next instrument (the 'point' posture)."""
-        names = list(INSTRUMENTS)
+        names = list(self.all_instruments())
+        if self.instrument not in names:
+            self.instrument = names[0]
         self.set_instrument(names[(names.index(self.instrument) + 1) % len(names)])
 
     def set_gate(self, on: bool) -> None:
@@ -1041,7 +1081,7 @@ class GloveSynth:
         applied here — it does more to separate a struck bell from a bowed
         pad than the harmonic recipes do.
         """
-        attack, decay, sustain, struck = ENVELOPES[self.instrument]
+        attack, decay, sustain, struck = self.envelope()
 
         # A change in target_freq is a note-on: mapping.py has already
         # quantized roll to a scale, so the target only moves in steps.
@@ -1126,10 +1166,73 @@ class GloveSynth:
                 np.sin(two_pi * ph(0) + 0.3 * lfo)
                 + 0.14 * np.sin(two_pi * ph(1, 2.0))
             ) + self._rng.standard_normal(frames) * (0.008 + 0.10 * chiff)
+        elif self.custom is not None:
+            tone = self._render_custom(self.custom, frames, n, env, ph, saw, inc)
         else:
             # default: classic bright sawtooth
             tone = saw(0)
         return tone * env
+
+    def _render_custom(self, patch, frames, n, env, ph, saw, inc):
+        """One block of a designed instrument.
+
+        Four engines, the same four the built-ins are made of, with their
+        numbers taken from the patch instead of being written into the
+        branch. Nothing here is new synthesis — it is the existing recipes
+        with the constants pulled out, which is why a custom instrument
+        sounds like it belongs beside the built-in ones.
+        """
+        two_pi = 2.0 * np.pi
+        eng = patch["engine"]
+        q = patch["params"]
+
+        if eng == "additive":
+            # Partials 1..6 over the fundamental. Normalised by the weights
+            # actually used, so raising one partial does not also raise the
+            # overall level and make every edit sound like a volume change.
+            amps = [q[f"p{k}"] for k in range(1, 7)]
+            total = sum(amps) or 1.0
+            tone = np.zeros(frames)
+            for k, a in enumerate(amps):
+                if a > 1e-4:
+                    tone = tone + a * np.sin(two_pi * ph(k, float(k + 1)))
+            tone /= total
+            if q["noise"] > 1e-4:
+                tone = tone + self._rng.standard_normal(frames) * q["noise"]
+
+        elif eng == "saws":
+            # Unevenly spaced on purpose: evenly spaced detune makes every
+            # adjacent pair beat at the same rate and they reinforce into a
+            # pulse instead of blurring. The primes do the uneven spacing.
+            count = int(q["voices"])
+            cents = q["spread"]
+            offs = [(-1.0, 0.0), (-0.37, 0.53), (-0.81, 1.19),
+                    (-1.43, 1.71), (-2.11, 2.29)][: max(count - 1, 1)]
+            mults = [1.0]
+            for lo, hi in offs:
+                mults.append(2.0 ** (cents * lo / 1200.0))
+                if len(mults) < count:
+                    mults.append(2.0 ** (cents * hi / 1200.0))
+            mults = mults[:count]
+            tone = np.zeros(frames)
+            for k, m in enumerate(mults):
+                tone = tone + saw(k, m)
+            tone /= max(len(mults) * 0.8, 1.0)
+
+        elif eng == "fm":
+            # Modulation index decaying faster than the amplitude is what
+            # makes a struck sound: bright attack settling to a pure tone.
+            idx = q["index"] * env ** q["index_decay"]
+            tone = np.sin(two_pi * ph(0) + idx * np.sin(two_pi * ph(1, q["ratio"])))
+
+        else:   # string
+            tone = self._render_ks(
+                frames, pickup=q["pickup"] if q["pickup"] > 1e-3 else 0.0
+            ) * KS_GAIN
+            if q["drive"] > 1e-3:
+                tone = self._cabinet(np.tanh(tone * q["drive"])) * 0.55
+
+        return tone
 
     def _env_block(
         self, n: np.ndarray, frames: int, attack: float, decay: float, sustain: float
@@ -1160,7 +1263,12 @@ class GloveSynth:
         noise. Every pass round the loop then runs it through the two-point
         average, so the harmonics die off fastest — the same way a real
         string loses its brightness long before it goes quiet."""
-        t60, self._ks_b = KS_VOICES[self.instrument]
+        patch = self.custom
+        if patch is not None and patch["engine"] == "string":
+            t60 = patch["params"]["t60"]
+            self._ks_b = patch["params"]["damping"]
+        else:
+            t60, self._ks_b = KS_VOICES.get(self.instrument, KS_VOICES["pluck"])
         n = int(np.clip(SAMPLE_RATE / max(self._freq, 20.0), 8, KS_MAX))
         self._ks_n = n
         exc = self._rng.standard_normal(n)

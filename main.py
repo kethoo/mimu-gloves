@@ -45,6 +45,51 @@ from synth import GloveSynth
 CONTROL_RATE = 100  # Hz
 
 
+# The patch being edited lives under this name, so auditioning is just
+# selecting an instrument — no separate preview path to keep in step.
+DESIGN_SLOT = "(designing)"
+
+
+def _handle_design(msg: dict, synth) -> None:
+    """Apply one message from the instrument designer.
+
+    Runs on the control loop rather than the socket thread: it swaps what
+    the audio callback reads out of synth.customs, and the store on disk is
+    not safe to write from two places at once.
+    """
+    import instruments
+
+    op = msg.get("op")
+    patch = msg.get("patch")
+    name = (msg.get("name") or "").strip()
+    try:
+        if op == "live" and isinstance(patch, dict):
+            synth.customs[DESIGN_SLOT] = instruments._clamp_patch(patch)
+            if synth.instrument != DESIGN_SLOT:
+                synth.set_instrument(DESIGN_SLOT, announce=False)
+        elif op == "save" and isinstance(patch, dict):
+            instruments.save(name, patch)
+            keep = synth.customs.get(DESIGN_SLOT)
+            synth.reload_customs()
+            if keep is not None:
+                synth.customs[DESIGN_SLOT] = keep
+            synth.set_instrument(name)
+        elif op == "delete":
+            instruments.delete(name)
+            keep = synth.customs.get(DESIGN_SLOT)
+            synth.reload_customs()
+            if keep is not None:
+                synth.customs[DESIGN_SLOT] = keep
+        elif op == "stop":
+            # Leave the designer: drop the preview so the point gesture does
+            # not keep landing on a patch you are no longer editing.
+            synth.customs.pop(DESIGN_SLOT, None)
+            if synth.instrument == DESIGN_SLOT:
+                synth.set_instrument("saw")
+    except Exception as exc:
+        print(f"[instruments] {op} failed: {exc}")
+
+
 def _request_song(src: str, synth, state: dict) -> None:
     """Fetch and decode a song off the control loop.
 
@@ -554,6 +599,9 @@ def main() -> None:
                 synth.set_loop(*take)
                 song_state["status"] = ""   # a glove take replaces the song
                 seq = None
+            msg = source.take_design()
+            if msg is not None:
+                _handle_design(msg, synth)
             want = source.take_song()
             if want is not None:
                 _request_song(want, synth, song_state)
@@ -588,6 +636,8 @@ def main() -> None:
                     "roll": frame.roll, "pitch": frame.pitch,
                     "yaw": frame.yaw, "motion": frame.motion,
                     "instrument": synth.instrument,
+                    "instrument_list": synth.all_instruments(),
+                    "designing": synth.instrument == DESIGN_SLOT,
                     "drone": synth.drone_on, "loop": synth.loop_on,
                     "muted": synth.instrument_off,
                     "frozen": synth.freeze_on,

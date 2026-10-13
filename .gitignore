@@ -9,3 +9,7 @@ __pycache__/
 # silently committed a 57 MB download.
 .song-cache/
 flexlog.csv
+
+# Instruments you designed are yours, not the project's. Delete the file
+# to start over; nothing breaks if it is missing.
+instruments.json
