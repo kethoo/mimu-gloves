@@ -63,6 +63,27 @@ ENGINES: dict[str, dict] = {
     },
 }
 
+# The filter, as part of the patch. This is the big one: every instrument
+# used to share one filter at one cutoff with one fixed resonance, so
+# whatever the oscillators did, the thing that shapes a sound most was
+# identical for all of them — measured, nothing above the 5th harmonic
+# survived for any instrument, which is exactly where they differ. In a
+# real synth the filter belongs to the patch, and that is most of why two
+# patches on the same oscillator can sound nothing alike.
+FILTER_RANGES = {
+    # Where this patch's filter sits. The hand still sweeps it; this is the
+    # centre that sweep moves around, so a dark pad and a bright lead stay
+    # dark and bright wherever the wrist is.
+    "cutoff": (2000.0, 150.0, 18000.0),
+    # 0 is a clean lowpass; past about 2.5 the peak starts to sing, which is
+    # the whole character of an acid or a vocal-ish patch.
+    "resonance": (1.1, 0.0, 3.6),
+    # How far the envelope opens the filter on each note, in octaves. This
+    # is the classic filter "wow" and no instrument here had it.
+    "env_amount": (0.0, -3.0, 5.0),
+    "env_decay": (0.25, 0.01, 3.0),
+}
+
 ENV_RANGES = {
     "attack": (0.01, 0.001, 1.0),
     "decay": (0.30, 0.005, 4.0),
@@ -84,38 +105,45 @@ STARTERS: dict[str, dict] = {
     "Clang": {   # 0.24 from flute, its nearest
         "engine": "fm", "attack": 0.004, "decay": 1.2, "sustain": 0.2,
         "struck": True,
+        "cutoff": 9000.0, "resonance": 0.3, "env_amount": -2.0, "env_decay": 0.5,
         "params": {"ratio": 1.41, "index": 12.0, "index_decay": 0.7},
     },
     "Growl": {   # 0.66 from organ
         "engine": "fm", "attack": 0.05, "decay": 0.4, "sustain": 0.9,
         "struck": False,
+        "cutoff": 700.0, "resonance": 3.2, "env_amount": 2.5, "env_decay": 0.35,
         "params": {"ratio": 0.5, "index": 3.0, "index_decay": 0.5},
     },
     "Air": {     # 0.38 from pluck
         "engine": "additive", "attack": 0.25, "decay": 0.6, "sustain": 0.8,
         "struck": False,
+        "cutoff": 6000.0, "resonance": 0.1, "env_amount": 1.5, "env_decay": 2.0,
         "params": {"p1": 0.1, "p2": 0.2, "p3": 0.4, "p4": 0.9, "p5": 1.0,
                    "p6": 0.8, "noise": 0.12},
     },
     "Hollow": {  # 0.80 from saw — odd partials only, a squarish clarinet
         "engine": "additive", "attack": 0.02, "decay": 0.4, "sustain": 0.9,
         "struck": False,
+        "cutoff": 1400.0, "resonance": 2.8, "env_amount": 3.0, "env_decay": 0.12,
         "params": {"p1": 1.0, "p2": 0.0, "p3": 0.7, "p4": 0.0, "p5": 0.5,
                    "p6": 0.0, "noise": 0.0},
     },
     "Huge": {    # 0.75 from saw
         "engine": "saws", "attack": 0.4, "decay": 0.9, "sustain": 0.9,
         "struck": False,
+        "cutoff": 2600.0, "resonance": 1.6, "env_amount": 1.2, "env_decay": 1.4,
         "params": {"voices": 6, "spread": 60.0},
     },
     "Tick": {    # 0.38 from strings
         "engine": "string", "attack": 0.001, "decay": 0.01, "sustain": 1.0,
         "struck": True,
+        "cutoff": 12000.0, "resonance": 0.0, "env_amount": -4.0, "env_decay": 0.06,
         "params": {"t60": 0.25, "damping": 0.05, "pickup": 0.45, "drive": 0.0},
     },
     "Howl": {    # 0.58 from guitar
         "engine": "string", "attack": 0.001, "decay": 0.01, "sustain": 1.0,
         "struck": True,
+        "cutoff": 900.0, "resonance": 3.4, "env_amount": 4.0, "env_decay": 1.8,
         "params": {"t60": 8.0, "damping": 0.9, "pickup": 0.1, "drive": 18.0},
     },
 }
@@ -131,6 +159,7 @@ def defaults(engine: str) -> dict:
     if engine not in ENGINES:
         raise ValueError(f"unknown engine {engine!r}")
     patch = {k: v[0] for k, v in ENV_RANGES.items()}
+    patch.update({k: v[0] for k, v in FILTER_RANGES.items()})
     patch["struck"] = engine in ("fm", "string")
     patch["engine"] = engine
     patch["params"] = {k: v[0] for k, v in ENGINES[engine]["params"].items()}
@@ -149,7 +178,7 @@ def _clamp_patch(patch: dict) -> dict:
     if engine not in ENGINES:
         engine = "additive"
     out = defaults(engine)
-    for k, (_d, lo, hi) in ENV_RANGES.items():
+    for k, (_d, lo, hi) in {**ENV_RANGES, **FILTER_RANGES}.items():
         try:
             out[k] = min(max(float(patch.get(k, out[k])), lo), hi)
         except (TypeError, ValueError):

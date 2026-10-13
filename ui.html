@@ -578,7 +578,7 @@ document.addEventListener("keydown", (e) => {
 // ---- instrument designer ------------------------------------------------
 // The form is built from a schema the backend publishes, so adding a knob
 // in instruments.py makes a slider appear here with no edit to this file.
-const DESIGN = {"engines": {"additive": {"label": "Additive \u2014 partials stacked over the fundamental", "params": {"p1": [1.0, 0.0, 1.0], "p2": [0.4, 0.0, 1.0], "p3": [0.15, 0.0, 1.0], "p4": [0.3, 0.0, 1.0], "p5": [0.05, 0.0, 1.0], "p6": [0.1, 0.0, 1.0], "noise": [0.0, 0.0, 0.3]}}, "saws": {"label": "Detuned saws \u2014 an ensemble, like the string pad", "params": {"voices": [4, 2, 6], "spread": [18.0, 2.0, 60.0]}}, "fm": {"label": "2-op FM \u2014 ratio decides metallic vs. warm", "params": {"ratio": [2.76, 0.5, 8.0], "index": [7.0, 0.0, 14.0], "index_decay": [2.0, 0.5, 6.0]}}, "string": {"label": "Plucked string \u2014 Karplus-Strong, like pluck and guitar", "params": {"t60": [2.0, 0.2, 8.0], "damping": [0.5, 0.0, 0.95], "pickup": [0.0, 0.0, 0.5], "drive": [0.0, 0.0, 20.0]}}}, "env": {"attack": [0.01, 0.001, 1.0], "decay": [0.3, 0.005, 4.0], "sustain": [0.72, 0.0, 1.0]}};
+const DESIGN = {"engines": {"additive": {"label": "Additive \u2014 partials stacked over the fundamental", "params": {"p1": [1.0, 0.0, 1.0], "p2": [0.4, 0.0, 1.0], "p3": [0.15, 0.0, 1.0], "p4": [0.3, 0.0, 1.0], "p5": [0.05, 0.0, 1.0], "p6": [0.1, 0.0, 1.0], "noise": [0.0, 0.0, 0.3]}}, "saws": {"label": "Detuned saws \u2014 an ensemble, like the string pad", "params": {"voices": [4, 2, 6], "spread": [18.0, 2.0, 60.0]}}, "fm": {"label": "2-op FM \u2014 ratio decides metallic vs. warm", "params": {"ratio": [2.76, 0.5, 8.0], "index": [7.0, 0.0, 14.0], "index_decay": [2.0, 0.5, 6.0]}}, "string": {"label": "Plucked string \u2014 Karplus-Strong, like pluck and guitar", "params": {"t60": [2.0, 0.2, 8.0], "damping": [0.5, 0.0, 0.95], "pickup": [0.0, 0.0, 0.5], "drive": [0.0, 0.0, 20.0]}}}, "env": {"attack": [0.01, 0.001, 1.0], "decay": [0.3, 0.005, 4.0], "sustain": [0.72, 0.0, 1.0]}, "filter": {"cutoff": [2000.0, 150.0, 18000.0], "resonance": [1.1, 0.0, 3.6], "env_amount": [0.0, -3.0, 5.0], "env_decay": [0.25, 0.01, 3.0]}};
 let patch = null, pendingStarter = null;
 
 function sendDesign(op, extra) {
@@ -587,6 +587,7 @@ function sendDesign(op, extra) {
 function freshPatch(engine) {
   const p = {engine, struck: engine === "fm" || engine === "string", params:{}};
   for (const k in DESIGN.env) p[k] = DESIGN.env[k][0];
+  for (const k in DESIGN.filter) p[k] = DESIGN.filter[k][0];
   for (const k in DESIGN.engines[engine].params)
     p.params[k] = DESIGN.engines[engine].params[k][0];
   return p;
@@ -624,6 +625,24 @@ function buildKnobs() {
     patch.struck = e.target.checked; pushPatch();
   });
   host.appendChild(st);
+  // The filter belongs to the patch, and shapes how a sound reads more than
+  // the oscillator does, so it sits here with everything else.
+  const sep = document.createElement("div");
+  sep.className = "hint"; sep.style.margin = "12px 0 2px";
+  sep.textContent = "filter — the hand still sweeps it; this is where it sits";
+  host.appendChild(sep);
+  for (const k in DESIGN.filter) {
+    const [, lo, hi] = DESIGN.filter[k];
+    host.appendChild(knobRow(k, patch[k] ?? DESIGN.filter[k][0], lo, hi,
+      v => { patch[k] = v; pushPatch(); },
+      v => k === "cutoff" ? Math.round(v) + " Hz"
+         : k === "env_amount" ? v.toFixed(1) + " oct"
+         : k === "env_decay" ? v.toFixed(2) + " s" : v.toFixed(2)));
+  }
+  const sep2 = document.createElement("div");
+  sep2.className = "hint"; sep2.style.margin = "12px 0 2px";
+  sep2.textContent = DESIGN.engines[patch.engine].label;
+  host.appendChild(sep2);
   const ps = DESIGN.engines[patch.engine].params;
   for (const k in ps) {
     const [, lo, hi] = ps[k];

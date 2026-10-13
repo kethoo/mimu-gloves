@@ -179,6 +179,7 @@ class GloveSynth:
         # because a designed additive instrument stacks six partials; the
         # built-ins use at most four.
         self._ph = [0.0] * 6
+        self._fenv = 0.0        # see _note_on
         self._lfo = 0.0           # vibrato LFO phase (flute)
         self._vib = 0.0           # vibrato LFO phase (finger-controlled)
         self._vibDepth = 0.0      # smoothed depth
@@ -391,6 +392,7 @@ class GloveSynth:
         """
         self._env_stage = 0
         self._chiff = 1.0
+        self._fenv = 1.0        # filter envelope, decays on its own clock
         if self.envelope()[3]:
             self._env = 0.0
             patch = self.custom
@@ -783,8 +785,28 @@ class GloveSynth:
         # so the coefficient needs no trim: measured, a nominal 1 kHz lands
         # its -3 dB point at 1009 Hz.
         fc = min(self._cutoff, 0.45 * SAMPLE_RATE)
-        a = min(1.0 - np.exp(-2.0 * np.pi * fc / SAMPLE_RATE), 0.9)
         res = FILTER_RES
+        patch = self.custom
+        if patch is not None:
+            # A designed instrument brings its own filter. The hand still
+            # sweeps — that gesture has to keep working — but it now scales
+            # the patch's own corner instead of replacing it, so a patch
+            # that is meant to be dark stays dark wherever the wrist is.
+            # Without this every instrument was rendered and then pushed
+            # through the same filter at the same frequency with the same
+            # resonance, which is most of why they all converged.
+            sweep = self._cutoff / 2000.0          # 1.0 at the hand's centre
+            fc = patch["cutoff"] * min(max(sweep, 0.12), 8.0)
+            # Envelope on the filter: the "wow" at the start of a note. Its
+            # own decay, because a filter that tracks the amplitude envelope
+            # just sounds like a volume change.
+            if abs(patch["env_amount"]) > 1e-3:
+                self._fenv *= float(np.exp(-frames /
+                                           (patch["env_decay"] * SAMPLE_RATE)))
+                fc *= 2.0 ** (patch["env_amount"] * self._fenv)
+            fc = min(max(fc, 30.0), 0.45 * SAMPLE_RATE)
+            res = patch["resonance"]
+        a = min(1.0 - np.exp(-2.0 * np.pi * fc / SAMPLE_RATE), 0.9)
         y1, y2, y3, y4 = self._lp
         lp = np.empty(frames)
         for i in range(frames):
