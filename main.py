@@ -683,6 +683,10 @@ def main() -> None:
                     "instrument_list": synth.all_instruments(),
                     "designing": synth.instrument == DESIGN_SLOT,
                     "starters": list(instruments_mod.STARTERS),
+                    # Only while the designer is open: it is ~1.5 kB a
+                    # message and nothing looks at it otherwise.
+                    "scope": (synth.scope()
+                              if synth.instrument == DESIGN_SLOT else None),
                     "drone": synth.drone_on, "loop": synth.loop_on,
                     "muted": synth.instrument_off,
                     "frozen": synth.freeze_on,

@@ -119,8 +119,25 @@ from the same four engines the built-ins are made of:
 | `fm` | two-operator FM — non-integer ratios sound metallic | bell |
 | `string` | Karplus-Strong plucked string | pluck, guitar |
 
-Pick an engine, drag the sliders — it auditions live, so play while you
-edit — then name it and save. Saved instruments join the list and are
+Start from one of the seven starting points (Clang, Growl, Air, Hollow,
+Huge, Tick, Howl) rather than from nothing — each is measured against all
+seven built-ins and none is closer than 0.68, so you begin somewhere that
+is not already in the instrument.
+
+**The filter is part of the patch**, which is the thing that makes two
+patches sound genuinely unalike: its own cutoff, resonance up to 3.6
+where the built-ins are fixed at 1.1, and an envelope that opens it on
+each note. Your hand still sweeps the filter; the patch decides where
+that sweep is centred.
+
+A **waveform and spectrum** sit above the controls, so you can watch a
+filter close, watch resonance grow a peak, watch an envelope open — the
+way Vital and similar tools make their own synthesis legible. There is a
+little **keyboard** too: click a key or use `z`–`m`, so you can hear the
+patch without the gloves.
+
+Drag the sliders — it auditions live, so play while you edit — then name
+it and save. Saved instruments join the list and are
 reached by the same 🤚 posture. They live in `instruments.json`, which is
 gitignored: they are yours, not the project's. Delete the file to start
 over.

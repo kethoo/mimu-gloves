@@ -398,6 +398,9 @@
       <div class="hint" style="margin-bottom:6px">Start from one of these,
         then bend it. They are deliberately not copies of the instruments
         above.</div>
+      <canvas id="scope" width="820" height="150"
+              style="width:100%;height:150px;display:block;border-radius:9px;
+                     background:var(--btn);margin-bottom:10px"></canvas>
       <div class="btnrow" id="starters" style="grid-template-columns:repeat(4,1fr)"></div>
       <div id="keys" style="display:flex;gap:4px;margin:10px 0 2px"></div>
       <div class="hint" style="margin-bottom:8px">Click a key, or use
@@ -664,6 +667,61 @@ function pickEngine(engine) {
   document.querySelectorAll("#engines button").forEach(
     b => b.classList.toggle("on", b.dataset.eng === engine));
 }
+// ---- scope --------------------------------------------------------------
+// Waveform on top, spectrum underneath. This is the part that makes a patch
+// legible: you can see a filter close, see resonance grow a peak, see an
+// envelope open — which is how Vital and the rest teach their own synthesis
+// rather than leaving you to infer it by ear.
+let scopeData = null, scopeShown = null;
+function drawScope() {
+  const c = document.getElementById("scope");
+  if (!c) return;
+  const g = c.getContext("2d");
+  const W = c.width, H = c.height, mid = H * 0.33;
+  g.clearRect(0, 0, W, H);
+  const accent = cssVar("--accent"), dim = cssVar("--gtrack");
+
+  // Ease toward the newest frame: states arrive at 10 Hz and jumping
+  // straight to each one reads as a stutter rather than a signal.
+  if (scopeData) {
+    if (!scopeShown || scopeShown.spec.length !== scopeData.spec.length) {
+      scopeShown = {wave: scopeData.wave.slice(), spec: scopeData.spec.slice()};
+    } else {
+      for (let i = 0; i < scopeShown.wave.length; i++)
+        scopeShown.wave[i] += (scopeData.wave[i] - scopeShown.wave[i]) * 0.35;
+      for (let i = 0; i < scopeShown.spec.length; i++)
+        scopeShown.spec[i] += (scopeData.spec[i] - scopeShown.spec[i]) * 0.25;
+    }
+  }
+  g.strokeStyle = dim; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, mid); g.lineTo(W, mid); g.stroke();
+
+  if (scopeShown) {
+    g.strokeStyle = accent; g.lineWidth = 2; g.beginPath();
+    scopeShown.wave.forEach((v, i) => {
+      const x = i / (scopeShown.wave.length - 1) * W, y = mid - v * mid * 0.85;
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    });
+    g.stroke();
+    const n = scopeShown.spec.length, bw = W / n;
+    g.fillStyle = accent;
+    scopeShown.spec.forEach((v, i) => {
+      // 16 px reserved at the bottom for the axis labels; without it the
+      // bars grow straight over them and the scale is unreadable.
+      const h = Math.max(1, v * (H - mid - 26));
+      g.globalAlpha = 0.35 + 0.55 * v;
+      g.fillRect(i * bw + 1, H - 16 - h, bw - 2, h);
+    });
+    g.globalAlpha = 1;
+  }
+  g.fillStyle = cssVar("--dim"); g.font = "11px ui-monospace, monospace";
+  g.fillText("waveform", 6, 13);
+  g.fillText("spectrum · 40 Hz", 6, H - 4);
+  g.fillText("16 kHz", W - 44, H - 4);
+  requestAnimationFrame(drawScope);
+}
+requestAnimationFrame(drawScope);
+
 // A short keyboard, so the editor can play itself. Every synth editor has
 // one; without it you drag sliders in silence, which is what made this
 // panel unusable.
@@ -1029,6 +1087,7 @@ function render(s) {
   document.querySelector("[data-ev=record]").classList.toggle("on", !!s.recording);
   document.querySelectorAll("[data-ins]").forEach((b) =>
     b.classList.toggle("on", b.dataset.ins === s.instrument));
+  if (s.scope) scopeData = s.scope;
   if (s.starters && !document.querySelector("#starters button")) {
     const host = document.getElementById("starters");
     s.starters.forEach(n => {

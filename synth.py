@@ -71,6 +71,10 @@ def _ring_write(buf: np.ndarray, i: int, data: np.ndarray) -> None:
         buf[:frames - k] = data[k:]
 
 FILTER_RES = 1.1     # ladder feedback; higher = more resonant peak at cutoff
+# Samples kept for the on-screen waveform and spectrum. 2048 at 44.1 kHz is
+# 46 ms: long enough to resolve down to about 40 Hz, short enough that the
+# display still looks live rather than averaged.
+SCOPE_LEN = 2048
 
 KS_MAX = 2048        # plucked string: longest delay line (lowest note)
 KS_GAIN = 2.4        # the string sits quieter than the oscillators; match it
@@ -179,6 +183,7 @@ class GloveSynth:
         # because a designed additive instrument stacks six partials; the
         # built-ins use at most four.
         self._ph = [0.0] * 6
+        self._scope = np.zeros(SCOPE_LEN)
         self._fenv = 0.0        # see _note_on
         self._lfo = 0.0           # vibrato LFO phase (flute)
         self._vib = 0.0           # vibrato LFO phase (finger-controlled)
@@ -344,6 +349,44 @@ class GloveSynth:
                 callback=self._callback,
             )
             self._has_input = False
+
+    def scope(self, points: int = 160, bins: int = 56) -> dict:
+        """Waveform and spectrum for the panel.
+
+        Computed here rather than in the callback. The waveform is
+        trigger-aligned on a rising zero crossing, which is what stops it
+        sliding sideways and makes a shape readable instead of a blur.
+        """
+        buf = self._scope
+        peak = float(np.abs(buf).max())
+        if peak < 1e-5:
+            return {"wave": [0.0] * points, "spec": [0.0] * bins, "peak": 0.0}
+
+        # Trigger: first upward zero crossing in the first half.
+        half = len(buf) // 2
+        seg = buf[:half]
+        crossings = np.nonzero((seg[:-1] <= 0) & (seg[1:] > 0))[0]
+        start = int(crossings[0]) if len(crossings) else 0
+        win = buf[start:start + half]
+        if len(win) < half:
+            win = buf[:half]
+        idx = np.linspace(0, len(win) - 1, points).astype(np.intp)
+        wave = [float(v) for v in (win[idx] / max(peak, 1e-6))]
+
+        # Spectrum on log-spaced bands, in dB — linear bins put almost
+        # everything musical in the leftmost pixels.
+        mag = np.abs(np.fft.rfft(buf * np.hanning(len(buf))))
+        freqs = np.fft.rfftfreq(len(buf), 1.0 / SAMPLE_RATE)
+        edges = np.geomspace(40.0, 16000.0, bins + 1)
+        spec = []
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            sel = (freqs >= lo) & (freqs < hi)
+            v = float(mag[sel].max()) if sel.any() else 0.0
+            db = 20.0 * np.log10(max(v, 1e-6) / max(mag.max(), 1e-6))
+            # float(), not np.float64: json.dumps cannot serialise numpy
+            # scalars and the whole state message would fail to send.
+            spec.append(float(max(0.0, 1.0 + db / 70.0)))   # -70 dB -> 0..1
+        return {"wave": wave, "spec": spec, "peak": round(peak, 4)}
 
     def describe_devices(self) -> str:
         """Which hardware the stream actually bound to. Printed at startup
@@ -870,6 +913,14 @@ class GloveSynth:
 
         out[:, 0] = left.astype(np.float32)
         out[:, 1] = right.astype(np.float32)
+
+        # Tap for the on-screen scope. A ring write and nothing else: this
+        # runs in the audio callback, so the FFT and the downsampling happen
+        # on the control thread where a slow frame costs a dropped redraw
+        # rather than a click.
+        n = min(frames, SCOPE_LEN)
+        mono = (left[-n:] + right[-n:]) * 0.5
+        self._scope = np.concatenate((self._scope[n:], mono))
 
     # ---- voice hand ---------------------------------------------------
 
