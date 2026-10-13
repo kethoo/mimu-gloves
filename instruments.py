@@ -70,6 +70,62 @@ ENV_RANGES = {
 }
 
 
+# Starting points, the way every synth opens on a preset rather than on a
+# blank patch. They are deliberately NOT the built-ins' own numbers: a first
+# attempt used those as the defaults, and every instrument you could make
+# came out a near-clone — measured 0.98 spectral similarity between a
+# default additive patch and the built-in saw, with custom patches ending up
+# more alike the built-ins than the built-ins are to each other.
+#
+# Each one below is measured against all seven built-ins; the comment is its
+# similarity to the nearest. Anything above about 0.85 is a clone and does
+# not belong here.
+STARTERS: dict[str, dict] = {
+    "Clang": {   # 0.24 from flute, its nearest
+        "engine": "fm", "attack": 0.004, "decay": 1.2, "sustain": 0.2,
+        "struck": True,
+        "params": {"ratio": 1.41, "index": 12.0, "index_decay": 0.7},
+    },
+    "Growl": {   # 0.66 from organ
+        "engine": "fm", "attack": 0.05, "decay": 0.4, "sustain": 0.9,
+        "struck": False,
+        "params": {"ratio": 0.5, "index": 3.0, "index_decay": 0.5},
+    },
+    "Air": {     # 0.38 from pluck
+        "engine": "additive", "attack": 0.25, "decay": 0.6, "sustain": 0.8,
+        "struck": False,
+        "params": {"p1": 0.1, "p2": 0.2, "p3": 0.4, "p4": 0.9, "p5": 1.0,
+                   "p6": 0.8, "noise": 0.12},
+    },
+    "Hollow": {  # 0.80 from saw — odd partials only, a squarish clarinet
+        "engine": "additive", "attack": 0.02, "decay": 0.4, "sustain": 0.9,
+        "struck": False,
+        "params": {"p1": 1.0, "p2": 0.0, "p3": 0.7, "p4": 0.0, "p5": 0.5,
+                   "p6": 0.0, "noise": 0.0},
+    },
+    "Huge": {    # 0.75 from saw
+        "engine": "saws", "attack": 0.4, "decay": 0.9, "sustain": 0.9,
+        "struck": False,
+        "params": {"voices": 6, "spread": 60.0},
+    },
+    "Tick": {    # 0.38 from strings
+        "engine": "string", "attack": 0.001, "decay": 0.01, "sustain": 1.0,
+        "struck": True,
+        "params": {"t60": 0.25, "damping": 0.05, "pickup": 0.45, "drive": 0.0},
+    },
+    "Howl": {    # 0.58 from guitar
+        "engine": "string", "attack": 0.001, "decay": 0.01, "sustain": 1.0,
+        "struck": True,
+        "params": {"t60": 8.0, "damping": 0.9, "pickup": 0.1, "drive": 18.0},
+    },
+}
+
+
+def starter(name: str) -> dict:
+    """A named starting point, validated like anything else."""
+    return _clamp_patch(STARTERS[name])
+
+
 def defaults(engine: str) -> dict:
     """A fresh patch for an engine, with every parameter at its default."""
     if engine not in ENGINES:

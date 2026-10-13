@@ -395,6 +395,14 @@
 
     <div class="panel" style="margin-top:16px">
       <div class="label">Design your own instrument</div>
+      <div class="hint" style="margin-bottom:6px">Start from one of these,
+        then bend it. They are deliberately not copies of the instruments
+        above.</div>
+      <div class="btnrow" id="starters" style="grid-template-columns:repeat(4,1fr)"></div>
+      <div id="keys" style="display:flex;gap:4px;margin:10px 0 2px"></div>
+      <div class="hint" style="margin-bottom:8px">Click a key, or use
+        <kbd>z</kbd><kbd>x</kbd><kbd>c</kbd><kbd>v</kbd><kbd>b</kbd><kbd>n</kbd><kbd>m</kbd>
+        — hear the patch without the gloves.</div>
       <div class="btnrow" id="engines"></div>
       <div class="hint" id="englabel" style="margin:8px 0 2px"></div>
       <div id="knobs"></div>
@@ -571,7 +579,7 @@ document.addEventListener("keydown", (e) => {
 // The form is built from a schema the backend publishes, so adding a knob
 // in instruments.py makes a slider appear here with no edit to this file.
 const DESIGN = {"engines": {"additive": {"label": "Additive \u2014 partials stacked over the fundamental", "params": {"p1": [1.0, 0.0, 1.0], "p2": [0.4, 0.0, 1.0], "p3": [0.15, 0.0, 1.0], "p4": [0.3, 0.0, 1.0], "p5": [0.05, 0.0, 1.0], "p6": [0.1, 0.0, 1.0], "noise": [0.0, 0.0, 0.3]}}, "saws": {"label": "Detuned saws \u2014 an ensemble, like the string pad", "params": {"voices": [4, 2, 6], "spread": [18.0, 2.0, 60.0]}}, "fm": {"label": "2-op FM \u2014 ratio decides metallic vs. warm", "params": {"ratio": [2.76, 0.5, 8.0], "index": [7.0, 0.0, 14.0], "index_decay": [2.0, 0.5, 6.0]}}, "string": {"label": "Plucked string \u2014 Karplus-Strong, like pluck and guitar", "params": {"t60": [2.0, 0.2, 8.0], "damping": [0.5, 0.0, 0.95], "pickup": [0.0, 0.0, 0.5], "drive": [0.0, 0.0, 20.0]}}}, "env": {"attack": [0.01, 0.001, 1.0], "decay": [0.3, 0.005, 4.0], "sustain": [0.72, 0.0, 1.0]}};
-let patch = null;
+let patch = null, pendingStarter = null;
 
 function sendDesign(op, extra) {
   if (connected) ws.send(JSON.stringify({type:"design", op, ...extra}));
@@ -637,6 +645,36 @@ function pickEngine(engine) {
   document.querySelectorAll("#engines button").forEach(
     b => b.classList.toggle("on", b.dataset.eng === engine));
 }
+// A short keyboard, so the editor can play itself. Every synth editor has
+// one; without it you drag sliders in silence, which is what made this
+// panel unusable.
+const AUD_NOTES = [["C",60],["D",62],["E",64],["F",65],["G",67],["A",69],["B",71],["C",72]];
+const AUD_KEYS = {z:60, x:62, c:64, v:65, b:67, n:69, m:71};
+function noteOn(n){ sendDesign("note", {note:n}); }
+function noteOff(){ sendDesign("noteoff", {}); }
+
+(function initKeys(){
+  const host = document.getElementById("keys");
+  AUD_NOTES.forEach(([label, n]) => {
+    const b = document.createElement("button");
+    b.textContent = label; b.style.flex = "1"; b.style.padding = "12px 0";
+    b.addEventListener("mousedown", () => noteOn(n));
+    b.addEventListener("mouseup", noteOff);
+    b.addEventListener("mouseleave", noteOff);
+    host.appendChild(b);
+  });
+  document.addEventListener("keydown", e => {
+    const t = e.target;
+    if (t && t.tagName === "INPUT" && t.type === "text") return;
+    if (e.repeat) return;
+    const n = AUD_KEYS[e.key.toLowerCase()];
+    if (n) { noteOn(n); e.preventDefault(); }
+  });
+  document.addEventListener("keyup", e => {
+    if (AUD_KEYS[e.key.toLowerCase()]) noteOff();
+  });
+})();
+
 (function initDesigner(){
   const host = document.getElementById("engines");
   host.style.gridTemplateColumns = "repeat(4,1fr)";
@@ -972,6 +1010,15 @@ function render(s) {
   document.querySelector("[data-ev=record]").classList.toggle("on", !!s.recording);
   document.querySelectorAll("[data-ins]").forEach((b) =>
     b.classList.toggle("on", b.dataset.ins === s.instrument));
+  if (s.starters && !document.querySelector("#starters button")) {
+    const host = document.getElementById("starters");
+    s.starters.forEach(n => {
+      const b = document.createElement("button");
+      b.textContent = n;
+      b.onclick = () => { sendDesign("starter", {name:n}); pendingStarter = n; };
+      host.appendChild(b);
+    });
+  }
   if (s.instrument_list) {
     const mine = Object.keys(s.instrument_list).filter(
       k => !document.querySelector(`[data-ins="${k}"]`) && k !== "(designing)");

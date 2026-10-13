@@ -37,6 +37,7 @@ import sys
 import time
 import webbrowser
 
+import instruments as instruments_mod
 import mapping
 import loop_mapping
 from sensors import DemoGloveSource, SimulatedGloveSource
@@ -53,7 +54,7 @@ DESIGN_SLOT = "(designing)"
 # 60 ms, and replucking that often is a rattle rather than a note, so the
 # retrigger is rate-limited to something that still reads as "it responded".
 RETRIGGER_MIN = 0.18
-_design_state = {"last": 0.0}
+_design_state = {"last": 0.0, "auditioning": False}
 
 
 def _handle_design(msg: dict, synth) -> None:
@@ -105,6 +106,24 @@ def _handle_design(msg: dict, synth) -> None:
             synth.reload_customs()
             if keep is not None:
                 synth.customs[DESIGN_SLOT] = keep
+        elif op == "note":
+            # Audition without the gloves. Every synth editor can play
+            # itself; ours could only be heard by holding a fist, so you
+            # edited into silence.
+            from mapping import midi_to_hz
+
+            synth.target_freq = midi_to_hz(float(msg.get("note", 60)))
+            synth.mute_instrument(False)
+            synth.set_gate(True)
+            synth._note_on()
+            _design_state["auditioning"] = True
+        elif op == "noteoff":
+            if _design_state.get("auditioning"):
+                synth.set_gate(False)
+                _design_state["auditioning"] = False
+        elif op == "starter":
+            synth.customs[DESIGN_SLOT] = instruments.starter(name)
+            synth.set_instrument(DESIGN_SLOT, announce=False)
         elif op == "stop":
             # Leave the designer: drop the preview so the point gesture does
             # not keep landing on a patch you are no longer editing.
@@ -663,6 +682,7 @@ def main() -> None:
                     "instrument": synth.instrument,
                     "instrument_list": synth.all_instruments(),
                     "designing": synth.instrument == DESIGN_SLOT,
+                    "starters": list(instruments_mod.STARTERS),
                     "drone": synth.drone_on, "loop": synth.loop_on,
                     "muted": synth.instrument_off,
                     "frozen": synth.freeze_on,
