@@ -490,10 +490,16 @@
               <circle cx="60" cy="60" r="52"/><circle cx="60" cy="60" r="46"/>
               <circle cx="60" cy="60" r="40"/><circle cx="60" cy="60" r="34"/>
             </g>
-            <circle cx="60" cy="60" r="24" fill="var(--accent)"/>
-            <circle cx="60" cy="60" r="3" fill="#15181e"/>
+            <!-- The label is warm rather than the accent teal: the accent
+                 is already the waveform, the knobs and every selected
+                 button, so a teal label read as more of the same instead of
+                 as a part of the record. Amber is also what a record label
+                 actually looks like. -->
+            <circle cx="60" cy="60" r="24" fill="#e2a33c"/>
+            <circle cx="60" cy="60" r="23" fill="none" stroke="#b9802a"/>
+            <circle cx="60" cy="60" r="3.2" fill="#f3f5f9"/>
             <text x="60" y="63" text-anchor="middle" font-size="9"
-                  fill="#15181e" font-family="ui-monospace,monospace">MIMU</text>
+                  fill="#4a3312" font-family="ui-monospace,monospace">MIMU</text>
           </svg>
           <!-- The arm is its own layer: inside the record it would turn with
                it, and a tonearm that spins is a different object entirely. -->
