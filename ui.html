@@ -853,9 +853,13 @@ function pushPatch() {
   if (pushTimer) return;
   pushTimer = setTimeout(() => { pushTimer = null; sendDesign("live", {patch}); }, 60);
 }
-function pickEngine(engine) {
+function pickEngine(engine, push = true) {
   patch = freshPatch(engine);
-  buildKnobs(); buildMacros(); pushPatch();
+  buildKnobs(); buildMacros();
+  // push=false on first load: the panel has to show its knobs straight
+  // away, but selecting an engine by itself must not seize the synth and
+  // start auditioning before you have asked for anything.
+  if (push) pushPatch();
   document.querySelectorAll("#engines .engopt").forEach(
     b => b.classList.toggle("on", b.dataset.eng === engine));
 }
@@ -981,6 +985,9 @@ try { setTab(localStorage.getItem("mimu.tab") || "play"); } catch (_) { setTab("
     sendDesign("save", {name: n, patch});
   };
   document.getElementById("insstop").onclick = () => sendDesign("stop", {});
+  // Show the first engine's controls immediately. Without this the panel
+  // opens on an empty grey strip and there is nothing to turn.
+  pickEngine(Object.keys(DESIGN.engines)[0], false);
   const adv = document.getElementById("advtoggle");
   adv.onclick = () => {
     const box = document.getElementById("knobs");
