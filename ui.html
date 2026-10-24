@@ -359,7 +359,7 @@
       <button data-ins="bell"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.5 C3.5 6 4.5 3 7 3 C9.5 3 10.5 6 10.5 10.5 Z M2.5 10.5 L11.5 10.5 M5.8 12.4 A1.6 1.6 0 0 0 8.2 12.4"/></svg>Bell</button>
       <button data-ins="flute"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 7.5 L13.5 7.5 M5 5.6 L5 9.4 M8 5.6 L8 9.4 M11 5.6 L11 9.4"/></svg>Flute</button>
       <button data-ins="pluck"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 11.5 L12.5 3.5 M4 9.8 C5.5 7.5 7.5 7 9 8.5"/></svg>Pluck</button>
-      <button data-ins="guitar"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5 L12.5 2.5 M11 2.5 L11 7 M8.2 7.2 A3.4 3.4 0 1 1 4.6 10.8 A2.9 2.9 0 1 1 8.2 7.2 Z M6.1 9.6 m-1.1 0 a1.1 1.1 0 1 0 2.2 0 a1.1 1.1 0 1 0 -2.2 0"/></svg>Guitar</button>
+      <button data-ins="guitar"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12.9 1.6 L13.6 2.3 M13.2 1.9 L8.4 6.7 M7.3 6.2 C8.6 7 9 8.3 8.2 9.3 C7.6 10 7.3 10.5 7.6 11.3 C8.1 12.7 7 13.9 5.4 13.9 C3.3 13.9 1.6 12.2 1.6 10.1 C1.6 8.4 2.6 7.6 3.6 7.2 C4.6 6.8 5.2 5.5 6 5.5 C6.5 5.5 6.9 5.9 7.3 6.2 Z"/></svg>Guitar</button>
       <span id="mine" style="display:contents"></span>
     </div>
   </div>
@@ -374,8 +374,8 @@
   <div class="panel">
     <div class="label" id="padlabel">Hand — drag the pad</div>
     <div class="btnrow" style="grid-template-columns:1fr 1fr; margin-bottom:10px">
-      <button id="hand-i" class="on">🎹 Live hand</button>
-      <button id="hand-v">🔁 Loop hand</button>
+      <button id="hand-i" class="on" data-icon="live">Live hand</button>
+      <button id="hand-v" data-icon="loophand">Loop hand</button>
     </div>
     <div class="hint" id="handhint" style="margin-bottom:8px">
       Roll = brightness, tilt = pitch, yaw = pan, index = volume.
@@ -400,26 +400,26 @@
     </div>
     <div class="btnrow">
       <button id="reset">reset hand (r)</button>
-      <button data-ev="scene">🎬 next scene (n)</button>
-      <button data-ev="recalibrate">↻ recalibrate flex (c)</button>
+      <button data-ev="scene" data-icon="scene">next scene (n)</button>
+      <button data-ev="recalibrate" data-icon="recal">recalibrate flex (c)</button>
     </div>
   </div>
 
     <div class="panel" style="margin-top:16px">
       <div class="label">Voice &amp; modes</div>
       <div class="btnrow">
-        <button class="rec" data-ev="record">🎙 record (v)</button>
-        <button class="rec" data-ev="overdub">➕ overdub (o)</button>
-        <button data-ev="loop" id="b-loop">🔁 loop (p)</button>
-        <button data-ev="granular" id="b-granular">✨ granular (g)</button>
-        <button data-ev="slices" id="b-slices">🥁 slices (b)</button>
-        <button data-ev="freeze" id="b-freeze">❄ freeze (f)</button>
-        <button data-ev="reverse" id="b-reverse">◀ reverse (j)</button>
-        <button data-ev="pitchlock" id="b-pitchlock">🎚 pitch only (k)</button>
-        <button data-ev="mute" id="b-drone">🔊 instrument (m)</button>
-        <button data-ev="live" id="b-live" class="rec">🎤 live voice (l)</button>
+        <button class="rec" data-ev="record" data-icon="record">record (v)</button>
+        <button class="rec" data-ev="overdub" data-icon="overdub">overdub (o)</button>
+        <button data-ev="loop" id="b-loop" data-icon="loop">loop (p)</button>
+        <button data-ev="granular" id="b-granular" data-icon="granular">granular (g)</button>
+        <button data-ev="slices" id="b-slices" data-icon="slices">slices (b)</button>
+        <button data-ev="freeze" id="b-freeze" data-icon="freeze">freeze (f)</button>
+        <button data-ev="reverse" id="b-reverse" data-icon="reverse">reverse (j)</button>
+        <button data-ev="pitchlock" id="b-pitchlock" data-icon="pitch">pitch only (k)</button>
+        <button data-ev="mute" id="b-drone" data-icon="speaker">instrument (m)</button>
+        <button data-ev="live" id="b-live" class="rec" data-icon="mic">live voice (l)</button>
       </div>
-      <button id="punch">👊 PUNCH (space)</button>
+      <button id="punch" data-icon="punch">PUNCH (space)</button>
       <div class="hint">
         Drag the pad = roll (brightness) and tilt (pitch).
         <kbd>space</kbd> wrist flick, <kbd>n</kbd> next scene,
@@ -441,8 +441,8 @@
       <input id="songsrc" type="text" spellcheck="false"
              placeholder="paste a link, a path like ~/Music/track.mp3, or a .mid">
       <div class="btnrow" style="grid-template-columns:2fr 1fr; margin-top:8px">
-        <button id="songload">▶ load into loop</button>
-        <button id="songclear">⏏ eject</button>
+        <button id="songload" data-icon="play">load into loop</button>
+        <button id="songclear" data-icon="eject">eject</button>
       </div>
       <div id="songstatus"></div>
       <div id="melodybar" style="display:none">
@@ -698,6 +698,39 @@ function knobRow(key, val, lo, hi, onchange, fmt) {
   });
   return d;
 }
+
+// Button icons. Declared as bare paths and wrapped once, so they are all
+// the same size, weight and colour and inherit the button's state.
+const ICONS = {
+  live:    "M5.5 12 m-2 0 a2 2 0 1 0 4 0 a2 2 0 1 0 -4 0 M7.5 12 L7.5 3 L13 1.7 L13 10 M13 10 m-2 0 a2 2 0 1 0 4 0 a2 2 0 1 0 -4 0",
+  loophand:"M3 5.5 A4.5 4.5 0 1 1 3 9.5 M3 3 L3 5.8 L5.8 5.8",
+  scene:   "M2.5 3 L2.5 12 L8 7.5 Z M9 3 L9 12 M12 3 L12 12",
+  recal:   "M12.4 7.5 A4.9 4.9 0 1 1 10.6 3.7 M12.8 1.6 L12.8 4.6 L9.8 4.6",
+  record:  "M7.5 7.5 m-4 0 a4 4 0 1 0 8 0 a4 4 0 1 0 -8 0",
+  overdub: "M7.5 3 L7.5 12 M3 7.5 L12 7.5",
+  loop:    "M4 4.5 L11 4.5 A2.5 2.5 0 0 1 11 9.5 L4 9.5 A2.5 2.5 0 0 1 4 4.5 Z",
+  granular:"M3 5 h0.01 M6 3.4 h0.01 M9.5 5.2 h0.01 M12 3.6 h0.01 M4 9 h0.01 M7.3 7.6 h0.01 M10.6 9.4 h0.01 M5.4 12 h0.01 M9 11.6 h0.01",
+  slices:  "M2.5 3.5 L2.5 11.5 M5.5 2.5 L5.5 12.5 M8.5 4.5 L8.5 10.5 M11.5 2.5 L11.5 12.5",
+  freeze:  "M7.5 1.8 L7.5 13.2 M2.6 4.6 L12.4 10.4 M12.4 4.6 L2.6 10.4",
+  reverse: "M11 3 L5 7.5 L11 12 Z M3.5 3 L3.5 12",
+  pitch:   "M4 2.5 L4 12.5 M11 2.5 L11 12.5 M4 5.5 m-1.5 0 a1.5 1.5 0 1 0 3 0 a1.5 1.5 0 1 0 -3 0 M11 9.5 m-1.5 0 a1.5 1.5 0 1 0 3 0 a1.5 1.5 0 1 0 -3 0",
+  speaker: "M2 6 L4.5 6 L7.5 3.3 L7.5 11.7 L4.5 9 L2 9 Z M10 5.6 A3 3 0 0 1 10 9.4",
+  mic:     "M7.5 2 A1.9 1.9 0 0 1 9.4 3.9 L9.4 7.1 A1.9 1.9 0 0 1 5.6 7.1 L5.6 3.9 A1.9 1.9 0 0 1 7.5 2 Z M3.6 7 A3.9 3.9 0 0 0 11.4 7 M7.5 11 L7.5 13.2",
+  punch:   "M7.5 2 L7.5 5 M7.5 10 L7.5 13 M2 7.5 L5 7.5 M10 7.5 L13 7.5 M3.9 3.9 L5.9 5.9 M9.1 9.1 L11.1 11.1 M11.1 3.9 L9.1 5.9 M5.9 9.1 L3.9 11.1",
+  play:    "M4 2.8 L12 7.5 L4 12.2 Z",
+  eject:   "M7.5 2.5 L12.5 8.5 L2.5 8.5 Z M2.5 11.5 L12.5 11.5",
+};
+function icon(name, cls) {
+  return `<svg class="${cls || "iicon"}" viewBox="0 0 15 15" width="16" height="16"
+    fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
+    stroke-linejoin="round"><path d="${ICONS[name]}"/></svg>`;
+}
+
+// Fill every data-icon button once the set is defined.
+document.querySelectorAll("[data-icon]").forEach(b => {
+  b.innerHTML = icon(b.dataset.icon) + b.innerHTML;
+});
+
 // ---- macro knobs --------------------------------------------------------
 // Each knob writes several raw parameters at once, from the table the
 // backend publishes, so the mapping is defined in one place rather than
@@ -1328,8 +1361,8 @@ function render(s) {
   // Lit when the synth is actually in the mix. Loading a record mutes it,
   // so this is the control that says "play over the track" or "don't".
   $("b-drone").classList.toggle("on", !!s.drone);
-  $("b-drone").textContent = s.muted ? "🔇 instrument off (m)"
-                                     : "🔊 instrument (m)";
+  $("b-drone").innerHTML = icon("speaker") +
+    (s.muted ? "instrument off (m)" : "instrument (m)");
   $("b-live").classList.toggle("on", !!s.live);
   document.querySelector("[data-ev=record]").classList.toggle("on", !!s.recording);
   document.querySelectorAll("[data-ins]").forEach((b) =>
