@@ -89,6 +89,14 @@
   .engopt.on span { color: inherit; opacity: .75; }
   .chips { display: flex; flex-wrap: wrap; gap: 7px; }
   .chips button { border-radius: 999px; padding: 7px 15px; font-size: 14px; }
+  /* Selected character is filled, not outlined. One of these is always the
+     one you are editing, so it should read as a state rather than as a
+     slightly emphasised button among seven. --bg for the text so it stays
+     legible on the light accent of the dark theme as well as the dark
+     accent of the light one. */
+  .chips button.on { background: var(--accent); border-color: var(--accent);
+                     color: var(--bg); }
+  .chips button.on:hover { background: var(--accent); }
   .livebadge { float: right; font-size: 12px; padding: 5px 12px;
                border-radius: 999px; color: var(--accent);
                background: color-mix(in srgb, var(--accent) 15%, transparent); }
