@@ -682,6 +682,11 @@ def main() -> None:
                     "instrument": synth.instrument,
                     "instrument_list": synth.all_instruments(),
                     "designing": synth.instrument == DESIGN_SLOT,
+                    # The page needs the patch back whenever the backend
+                    # chose it — clicking a character loads a whole patch,
+                    # and without this the knobs keep showing the old one
+                    # and the next knob move overwrites what you just picked.
+                    "design_patch": synth.customs.get(DESIGN_SLOT),
                     "starters": list(instruments_mod.STARTERS),
                     # Only while the designer is open: it is ~1.5 kB a
                     # message and nothing looks at it otherwise.

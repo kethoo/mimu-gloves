@@ -92,6 +92,27 @@
   .livebadge { float: right; font-size: 12px; padding: 5px 12px;
                border-radius: 999px; color: var(--accent);
                background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  /* Rotary knobs. A slider says "a number between two numbers"; a knob says
+     "turn this", which is what the control actually is. Dragging up and down
+     turns it — the same gesture every plugin uses, and far steadier than
+     trying to follow a circle with the pointer. */
+  .macros { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px;
+            background: var(--btn); border-radius: 13px; padding: 16px 10px; }
+  @media (max-width: 760px) { .macros { grid-template-columns: repeat(3, 1fr); } }
+  /* mknob, not knob: .knob is already the little dot on the orientation
+     gauges further down this stylesheet, and the later rule wins — these
+     came out as 9-pixel absolutely-positioned blobs stacked on each other. */
+  .mknob { display: flex; flex-direction: column; align-items: center;
+           gap: 9px; user-select: none; }
+  .mknob svg { cursor: ns-resize; touch-action: none; display: block; }
+  .mknob .kname { font-size: 13px; color: var(--dim); }
+  .mknob .kval { font-size: 12px; color: var(--accent);
+                 font-variant-numeric: tabular-nums; min-height: 15px;
+                 opacity: 0; transition: opacity .15s; }
+  .mknob.live .kval, .mknob:hover .kval { opacity: 1; }
+  .advrow { margin-top: 12px; }
+  .advrow > button { font-size: 13px; padding: 6px 13px; }
+
   .keyrow { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px;
             margin-top: 12px; }
   .keyrow button { padding: 16px 0; font-size: 16px; }
@@ -455,7 +476,11 @@
           <canvas id="scope" width="820" height="190"
                   style="width:100%;height:190px;display:block;border-radius:11px;
                          background:#13161c"></canvas>
-          <div id="knobs" style="margin-top:12px"></div>
+          <div class="macros" id="macros" style="margin-top:12px"></div>
+          <div class="advrow">
+            <button id="advtoggle">show every parameter</button>
+          </div>
+          <div id="knobs" hidden></div>
           <div class="keyrow" id="keys"></div>
           <div class="hint" style="margin-top:8px">Try it without the gloves —
             click a key or type the letter.</div>
@@ -630,7 +655,7 @@ document.addEventListener("keydown", (e) => {
 // ---- instrument designer ------------------------------------------------
 // The form is built from a schema the backend publishes, so adding a knob
 // in instruments.py makes a slider appear here with no edit to this file.
-const DESIGN = {"engines": {"additive": {"label": "Additive \u2014 partials stacked over the fundamental", "params": {"p1": [1.0, 0.0, 1.0], "p2": [0.4, 0.0, 1.0], "p3": [0.15, 0.0, 1.0], "p4": [0.3, 0.0, 1.0], "p5": [0.05, 0.0, 1.0], "p6": [0.1, 0.0, 1.0], "noise": [0.0, 0.0, 0.3]}}, "saws": {"label": "Detuned saws \u2014 an ensemble, like the string pad", "params": {"voices": [4, 2, 6], "spread": [18.0, 2.0, 60.0]}}, "fm": {"label": "2-op FM \u2014 ratio decides metallic vs. warm", "params": {"ratio": [2.76, 0.5, 8.0], "index": [7.0, 0.0, 14.0], "index_decay": [2.0, 0.5, 6.0]}}, "string": {"label": "Plucked string \u2014 Karplus-Strong, like pluck and guitar", "params": {"t60": [2.0, 0.2, 8.0], "damping": [0.5, 0.0, 0.95], "pickup": [0.0, 0.0, 0.5], "drive": [0.0, 0.0, 20.0]}}}, "env": {"attack": [0.01, 0.001, 1.0], "decay": [0.3, 0.005, 4.0], "sustain": [0.72, 0.0, 1.0]}, "filter": {"cutoff": [2000.0, 150.0, 18000.0], "resonance": [1.1, 0.0, 3.6], "env_amount": [0.0, -3.0, 5.0], "env_decay": [0.25, 0.01, 3.0]}};
+const DESIGN = {"engines": {"additive": {"label": "Additive \u2014 partials stacked over the fundamental", "params": {"p1": [1.0, 0.0, 1.0], "p2": [0.4, 0.0, 1.0], "p3": [0.15, 0.0, 1.0], "p4": [0.3, 0.0, 1.0], "p5": [0.05, 0.0, 1.0], "p6": [0.1, 0.0, 1.0], "noise": [0.0, 0.0, 0.3]}}, "saws": {"label": "Detuned saws \u2014 an ensemble, like the string pad", "params": {"voices": [4, 2, 6], "spread": [18.0, 2.0, 60.0]}}, "fm": {"label": "2-op FM \u2014 ratio decides metallic vs. warm", "params": {"ratio": [2.76, 0.5, 8.0], "index": [7.0, 0.0, 14.0], "index_decay": [2.0, 0.5, 6.0]}}, "string": {"label": "Plucked string \u2014 Karplus-Strong, like pluck and guitar", "params": {"t60": [2.0, 0.2, 8.0], "damping": [0.5, 0.0, 0.95], "pickup": [0.0, 0.0, 0.5], "drive": [0.0, 0.0, 20.0]}}}, "env": {"attack": [0.01, 0.001, 1.0], "decay": [0.3, 0.005, 4.0], "sustain": [0.72, 0.0, 1.0]}, "filter": {"cutoff": [2000.0, 150.0, 18000.0], "resonance": [1.1, 0.0, 3.6], "env_amount": [0.0, -3.0, 5.0], "env_decay": [0.25, 0.01, 3.0]}, "macros": {"additive": [["bright", [["cutoff", 350.0, 14000.0, "exp"], ["p4", 0.05, 0.95], ["p5", 0.0, 0.9], ["p6", 0.0, 0.8]]], ["body", [["p1", 0.25, 1.0], ["p2", 0.1, 0.85]]], ["attack", [["attack", 0.001, 0.8, "exp"]]], ["release", [["decay", 0.03, 3.5, "exp"]]], ["air", [["noise", 0.0, 0.25]]], ["reso", [["resonance", 0.0, 3.4]]]], "saws": [["bright", [["cutoff", 350.0, 14000.0, "exp"]]], ["body", [["voices", 2, 6]]], ["attack", [["attack", 0.001, 0.8, "exp"]]], ["release", [["decay", 0.03, 3.5, "exp"]]], ["detune", [["spread", 2.0, 60.0]]], ["reso", [["resonance", 0.0, 3.4]]]], "fm": [["bright", [["cutoff", 350.0, 14000.0, "exp"], ["index", 0.5, 14.0]]], ["body", [["index_decay", 0.5, 5.0]]], ["attack", [["attack", 0.001, 0.8, "exp"]]], ["release", [["decay", 0.03, 3.5, "exp"]]], ["ratio", [["ratio", 0.5, 8.0]]], ["reso", [["resonance", 0.0, 3.4]]]], "string": [["bright", [["cutoff", 350.0, 14000.0, "exp"], ["damping", 0.95, 0.05]]], ["body", [["t60", 0.25, 8.0, "exp"]]], ["attack", [["attack", 0.001, 0.8, "exp"]]], ["release", [["decay", 0.03, 3.5, "exp"]]], ["pickup", [["pickup", 0.0, 0.5]]], ["drive", [["drive", 0.0, 20.0]]]]}};
 let patch = null, pendingStarter = null;
 
 function sendDesign(op, extra) {
@@ -658,6 +683,124 @@ function knobRow(key, val, lo, hi, onchange, fmt) {
   });
   return d;
 }
+// ---- macro knobs --------------------------------------------------------
+// Each knob writes several raw parameters at once, from the table the
+// backend publishes, so the mapping is defined in one place rather than
+// once here and once there.
+const SWEEP = 135;          // degrees either side of straight up
+
+function lerp(v, a, b) { return a + (b - a) * v; }
+function unlerp(x, a, b) { return b === a ? 0 : (x - a) / (b - a); }
+
+function applyMacro(name, v) {
+  const spec = (DESIGN.macros[patch.engine] || []).find(m => m[0] === name);
+  if (!spec) return;
+  for (const [key, lo, hi, curve] of spec[1]) {
+    let out = curve === "exp"
+      ? lo * Math.pow(hi / lo, v)      // ratio spacing: time and pitch
+      : lerp(v, lo, hi);               // need it to feel even
+    if (key === "voices") out = Math.round(out);
+    if (key in (patch.params || {})) patch.params[key] = out;
+    else patch[key] = out;
+  }
+  pushPatch();
+}
+
+// Where a knob should point for the patch currently loaded: read back the
+// first parameter it drives. Without this, picking a character left every
+// knob at its old angle and the panel lied about the sound.
+function macroValue(name) {
+  const spec = (DESIGN.macros[patch.engine] || []).find(m => m[0] === name);
+  if (!spec) return 0;
+  const [key, lo, hi, curve] = spec[1][0];
+  const cur = (key in (patch.params || {})) ? patch.params[key] : patch[key];
+  if (cur == null) return 0;
+  const v = curve === "exp"
+    ? Math.log(cur / lo) / Math.log(hi / lo)
+    : unlerp(cur, lo, hi);
+  return Math.max(0, Math.min(1, v));
+}
+
+function makeKnob(name) {
+  const wrap = document.createElement("div");
+  wrap.className = "mknob";
+  wrap.innerHTML = `
+    <svg width="58" height="58" viewBox="0 0 58 58">
+      <circle cx="29" cy="29" r="20" fill="var(--panel)" stroke="var(--line)"/>
+      <path class="arc" fill="none" stroke="var(--gtrack)" stroke-width="3"
+            stroke-linecap="round"/>
+      <path class="fill" fill="none" stroke="var(--accent)" stroke-width="3"
+            stroke-linecap="round"/>
+      <line class="ptr" x1="29" y1="29" x2="29" y2="14" stroke="var(--accent)"
+            stroke-width="3" stroke-linecap="round"/>
+    </svg>
+    <span class="kname">${name}</span><span class="kval"></span>`;
+  const svg = wrap.querySelector("svg");
+  const ptr = wrap.querySelector(".ptr");
+  const arc = wrap.querySelector(".arc");
+  const fill = wrap.querySelector(".fill");
+  const val = wrap.querySelector(".kval");
+
+  const polar = (deg, r) => {
+    const a = (deg - 90) * Math.PI / 180;
+    return [29 + r * Math.cos(a), 29 + r * Math.sin(a)];
+  };
+  const arcPath = (from, to) => {
+    const [x1, y1] = polar(from, 24), [x2, y2] = polar(to, 24);
+    return `M${x1} ${y1} A24 24 0 ${Math.abs(to - from) > 180 ? 1 : 0} 1 ${x2} ${y2}`;
+  };
+  arc.setAttribute("d", arcPath(-SWEEP, SWEEP));
+
+  let v = 0;
+  function draw() {
+    const deg = -SWEEP + v * SWEEP * 2;
+    ptr.setAttribute("transform", `rotate(${deg} 29 29)`);
+    fill.setAttribute("d", arcPath(-SWEEP, Math.max(-SWEEP + 0.01, deg)));
+    val.textContent = Math.round(v * 100);
+  }
+  function set(nv, send) {
+    v = Math.max(0, Math.min(1, nv));
+    draw();
+    if (send) applyMacro(name, v);
+  }
+  wrap.setValue = nv => set(nv, false);
+
+  let dragging = false, startY = 0, startV = 0;
+  svg.addEventListener("pointerdown", e => {
+    dragging = true; startY = e.clientY; startV = v;
+    wrap.classList.add("live"); svg.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener("pointermove", e => {
+    if (!dragging) return;
+    // 160 px of travel for the whole range; shift for fine control.
+    const k = e.shiftKey ? 520 : 160;
+    set(startV + (startY - e.clientY) / k, true);
+  });
+  const stop = e => {
+    if (!dragging) return;
+    dragging = false; wrap.classList.remove("live");
+    try { svg.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+  svg.addEventListener("pointerup", stop);
+  svg.addEventListener("pointercancel", stop);
+  svg.addEventListener("dblclick", () => set(0.5, true));
+  svg.addEventListener("wheel", e => {
+    e.preventDefault(); set(v - Math.sign(e.deltaY) * 0.03, true);
+  }, {passive: false});
+  draw();
+  return wrap;
+}
+
+function buildMacros() {
+  const host = document.getElementById("macros");
+  host.innerHTML = "";
+  for (const [name] of (DESIGN.macros[patch.engine] || [])) {
+    const k = makeKnob(name);
+    k.setValue(macroValue(name));
+    host.appendChild(k);
+  }
+}
+
 function buildKnobs() {
   const host = document.getElementById("knobs");
   host.innerHTML = "";
@@ -712,7 +855,7 @@ function pushPatch() {
 }
 function pickEngine(engine) {
   patch = freshPatch(engine);
-  buildKnobs(); pushPatch();
+  buildKnobs(); buildMacros(); pushPatch();
   document.querySelectorAll("#engines .engopt").forEach(
     b => b.classList.toggle("on", b.dataset.eng === engine));
 }
@@ -838,6 +981,13 @@ try { setTab(localStorage.getItem("mimu.tab") || "play"); } catch (_) { setTab("
     sendDesign("save", {name: n, patch});
   };
   document.getElementById("insstop").onclick = () => sendDesign("stop", {});
+  const adv = document.getElementById("advtoggle");
+  adv.onclick = () => {
+    const box = document.getElementById("knobs");
+    box.hidden = !box.hidden;
+    adv.textContent = box.hidden ? "show every parameter" : "hide parameters";
+    adv.classList.toggle("on", !box.hidden);
+  };
 })();
 
 // ---- theme --------------------------------------------------------------
@@ -1159,12 +1309,26 @@ function render(s) {
   document.querySelectorAll("[data-ins]").forEach((b) =>
     b.classList.toggle("on", b.dataset.ins === s.instrument));
   if (s.scope) scopeData = s.scope;
+  // Adopt a patch the backend picked for us (a character chip), then let
+  // the knobs and the advanced sliders re-read it.
+  if (pendingStarter && s.design_patch) {
+    patch = JSON.parse(JSON.stringify(s.design_patch));
+    pendingStarter = null;
+    document.querySelectorAll("#engines .engopt").forEach(
+      b => b.classList.toggle("on", b.dataset.eng === patch.engine));
+    buildKnobs(); buildMacros();
+  }
   if (s.starters && !document.querySelector("#starters button")) {
     const host = document.getElementById("starters");
     s.starters.forEach(n => {
       const b = document.createElement("button");
       b.textContent = n;
-      b.onclick = () => { sendDesign("starter", {name:n}); pendingStarter = n; };
+      b.onclick = () => {
+        sendDesign("starter", {name: n});
+        pendingStarter = n;
+        document.querySelectorAll("#starters button").forEach(
+          x => x.classList.toggle("on", x === b));
+      };
       host.appendChild(b);
     });
   }

@@ -154,6 +154,53 @@ def starter(name: str) -> dict:
     return _clamp_patch(STARTERS[name])
 
 
+# Six knobs per engine, each writing several of the raw parameters at once.
+# p1..p6, index_decay and t60 are what the synthesis needs; they are not what
+# anyone reaching for a sound is thinking about. Four of the six mean the
+# same thing on every engine. The last two cannot: "detune" is meaningless
+# on a single FM pair and "pickup" is meaningless without a string, so those
+# two are named for what they actually do on the engine you picked rather
+# than given a label that lies.
+#
+# Each target is (param, low, high) and optionally "exp" for a ratio-spaced
+# sweep, which is how time and frequency have to move to feel even.
+MACROS = {
+    "additive": [
+        ("bright", [("cutoff", 350.0, 14000.0, "exp"), ("p4", 0.05, 0.95),
+                    ("p5", 0.0, 0.9), ("p6", 0.0, 0.8)]),
+        ("body", [("p1", 0.25, 1.0), ("p2", 0.1, 0.85)]),
+        ("attack", [("attack", 0.001, 0.8, "exp")]),
+        ("release", [("decay", 0.03, 3.5, "exp")]),
+        ("air", [("noise", 0.0, 0.25)]),
+        ("reso", [("resonance", 0.0, 3.4)]),
+    ],
+    "saws": [
+        ("bright", [("cutoff", 350.0, 14000.0, "exp")]),
+        ("body", [("voices", 2, 6)]),
+        ("attack", [("attack", 0.001, 0.8, "exp")]),
+        ("release", [("decay", 0.03, 3.5, "exp")]),
+        ("detune", [("spread", 2.0, 60.0)]),
+        ("reso", [("resonance", 0.0, 3.4)]),
+    ],
+    "fm": [
+        ("bright", [("cutoff", 350.0, 14000.0, "exp"), ("index", 0.5, 14.0)]),
+        ("body", [("index_decay", 0.5, 5.0)]),
+        ("attack", [("attack", 0.001, 0.8, "exp")]),
+        ("release", [("decay", 0.03, 3.5, "exp")]),
+        ("ratio", [("ratio", 0.5, 8.0)]),
+        ("reso", [("resonance", 0.0, 3.4)]),
+    ],
+    "string": [
+        ("bright", [("cutoff", 350.0, 14000.0, "exp"), ("damping", 0.95, 0.05)]),
+        ("body", [("t60", 0.25, 8.0, "exp")]),
+        ("attack", [("attack", 0.001, 0.8, "exp")]),
+        ("release", [("decay", 0.03, 3.5, "exp")]),
+        ("pickup", [("pickup", 0.0, 0.5)]),
+        ("drive", [("drive", 0.0, 20.0)]),
+    ],
+}
+
+
 def defaults(engine: str) -> dict:
     """A fresh patch for an engine, with every parameter at its default."""
     if engine not in ENGINES:
