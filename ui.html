@@ -88,6 +88,13 @@
   .engopt span { display: block; font-size: 13px; color: var(--dim); margin-top: 2px; }
   .engopt.on span { color: inherit; opacity: .75; }
   .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  /* Icons, not emoji: emoji are a different typeface at a different weight
+     on every machine, they do not take the button's colour, and there is no
+     emoji that means "sawtooth". These are drawn to say what the instrument
+     is — a sawtooth wave, organ pipes, a bowed string. */
+  .iicon { vertical-align: -3px; margin-right: 7px; opacity: .75; }
+  button.on .iicon { opacity: 1; }
+
   .chips button { border-radius: 999px; padding: 7px 15px; font-size: 14px; }
   /* Selected character is filled, not outlined. One of these is always the
      one you are editing, so it should read as a state rather than as a
@@ -346,13 +353,13 @@
   <div class="panel" style="margin-bottom:0">
     <div class="instruments" id="instruments" style="align-items:center">
       <span class="label" style="margin:0 10px 0 0">Instrument</span>
-      <button data-ins="saw">🪚 Saw</button>
-      <button data-ins="organ">🎹 Organ</button>
-      <button data-ins="strings">🎻 Strings</button>
-      <button data-ins="bell">🔔 Bell</button>
-      <button data-ins="flute">🎶 Flute</button>
-      <button data-ins="pluck">🪕 Pluck</button>
-      <button data-ins="guitar">🎸 Guitar</button>
+      <button data-ins="saw"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1 11 L5 3 L5 11 L9 3 L9 11 L13 3 L13 11"/></svg>Saw</button>
+      <button data-ins="organ"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13 L2 5 M5.5 13 L5.5 2 M9 13 L9 4 M12.5 13 L12.5 6 M1 13.5 L13.5 13.5"/></svg>Organ</button>
+      <button data-ins="strings"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1 7.5 C3 2.5 5 12.5 7 7.5 C9 2.5 11 12.5 13 7.5"/></svg>Strings</button>
+      <button data-ins="bell"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.5 C3.5 6 4.5 3 7 3 C9.5 3 10.5 6 10.5 10.5 Z M2.5 10.5 L11.5 10.5 M5.8 12.4 A1.6 1.6 0 0 0 8.2 12.4"/></svg>Bell</button>
+      <button data-ins="flute"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 7.5 L13.5 7.5 M5 5.6 L5 9.4 M8 5.6 L8 9.4 M11 5.6 L11 9.4"/></svg>Flute</button>
+      <button data-ins="pluck"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 11.5 L12.5 3.5 M4 9.8 C5.5 7.5 7.5 7 9 8.5"/></svg>Pluck</button>
+      <button data-ins="guitar"><svg class="iicon" viewBox="0 0 15 15" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5 L12.5 2.5 M11 2.5 L11 7 M8.2 7.2 A3.4 3.4 0 1 1 4.6 10.8 A2.9 2.9 0 1 1 8.2 7.2 Z M6.1 9.6 m-1.1 0 a1.1 1.1 0 1 0 2.2 0 a1.1 1.1 0 1 0 -2.2 0"/></svg>Guitar</button>
       <span id="mine" style="display:contents"></span>
     </div>
   </div>
@@ -365,7 +372,7 @@
 
   <section class="tabpane" data-pane="play">
   <div class="panel">
-    <div class="label">Hand — drag the pad</div>
+    <div class="label" id="padlabel">Hand — drag the pad</div>
     <div class="btnrow" style="grid-template-columns:1fr 1fr; margin-bottom:10px">
       <button id="hand-i" class="on">🎹 Live hand</button>
       <button id="hand-v">🔁 Loop hand</button>
@@ -1298,7 +1305,11 @@ function render(s) {
     yawSlider.value = Math.max(-90, Math.min(90, s.yaw));
     yawVal.textContent = Math.round(s.yaw) + "°";
     if (!padLabelled) {
-      document.querySelector(".label").textContent = "Hand — live from the glove";
+      // By id, not by class: querySelector(".label") takes the FIRST label
+      // on the page, and since the instrument rail moved above this panel
+      // that was the rail — which started calling itself "Hand — live from
+      // the glove".
+      document.getElementById("padlabel").textContent = "Hand — live from the glove";
       padLabelled = true;
     }
   }
