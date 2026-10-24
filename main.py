@@ -167,8 +167,9 @@ def _request_song(src: str, synth, state: dict) -> None:
                 state["status"] = (f"{mel.name} — {len(mel)} notes, "
                                    f"{mel.length:.0f}s")
             else:
-                samples, rate, name = song_loader.load(src)
+                samples, rate, name, artist = song_loader.load(src)
                 state["loaded"] = (samples, rate, name)
+                state["artist"] = artist
                 state["status"] = f"{name} — {len(samples) / rate:.0f}s"
         except Exception as exc:
             # Shown in the page rather than only the terminal: the player
@@ -522,13 +523,14 @@ def main() -> None:
         import song as song_loader
 
         try:
-            samples, rate, song_name = song_loader.load(
+            samples, rate, song_name, song_artist = song_loader.load(
                 song_src,
                 start=float(_flag_value("--song-start") or 0.0),
                 seconds=float(_flag_value("--song-seconds") or 0.0) or None,
             )
             synth.set_loop(samples, rate, label=song_name)
             synth.mute_instrument(True)
+            song_state["artist"] = song_artist
             song_state["status"] = f"{song_name} — {len(samples) / rate:.0f}s"
         except Exception as exc:
             # A bad path or a dead link should not cost you the instrument:
