@@ -496,6 +496,7 @@ def main() -> None:
     synth = GloveSynth(
         input_device=_resolve_device(_flag_value("--audio-in"), want_output=False),
         output_device=_resolve_device(_flag_value("--audio-out"), want_output=True),
+        no_mic="--no-mic" in sys.argv,
     )
     print(f"[audio  {synth.describe_devices()}]")
     synth.drone_on = start_sounding
@@ -579,8 +580,25 @@ def main() -> None:
         run_gloves([glove, voice_source])
     source.start()
     synth.start()
+    # A stream can start without raising and then never call back. On macOS
+    # that is what a duplex stream does when microphone permission was never
+    # granted: everything reports healthy and the instrument is silent, with
+    # the playhead sitting at zero. Say so rather than leave it a mystery.
+    _audio_t0 = time.monotonic()
+    _audio_warned = False
     try:
         while not getattr(source, "quit_requested", False):
+            if not _audio_warned and time.monotonic() - _audio_t0 > 2.0:
+                _audio_warned = True
+                if synth.blocks_rendered == 0:
+                    print("\n[!] The audio device has not asked for a single "
+                          "block in 2 s — the stream started but is not "
+                          "running, so nothing can be heard and the playhead "
+                          "will not move.")
+                    print("    On macOS this is usually microphone permission: "
+                          "the duplex stream opens and then never calls back.")
+                    print("    Try:  python main.py --no-mic ...   "
+                          "or check System Settings > Privacy > Microphone.")
             frame = source.latest
             if seq is not None:
                 # Before the mapping, so the hand's transpose applies to the

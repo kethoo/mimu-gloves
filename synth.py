@@ -150,7 +150,8 @@ def _poly_saw(p: np.ndarray, dt: float) -> np.ndarray:
 
 
 class GloveSynth:
-    def __init__(self, input_device=None, output_device=None) -> None:
+    def __init__(self, input_device=None, output_device=None,
+                 no_mic: bool = False) -> None:
         # PortAudio binds a stream to whatever device was default when the
         # stream was *created*. Switching the system default afterwards (say,
         # connecting AirPods mid-session) does not move an already-open
@@ -184,6 +185,7 @@ class GloveSynth:
         # built-ins use at most four.
         self._ph = [0.0] * 6
         self._scope = np.zeros(SCOPE_LEN)
+        self._blocks = 0            # see blocks_rendered
         self._wave_cache: list = []
         self._wave_for = None
         self._fenv = 0.0        # see _note_on
@@ -330,7 +332,12 @@ class GloveSynth:
 
         # Duplex stream (mic in + speakers out in one callback) so live
         # mode works; fall back to output-only if there's no input device.
+        # `no_mic` forces that fallback: a duplex stream can open cleanly and
+        # then never call back when the OS has not granted microphone
+        # access, which is silence with nothing reporting a fault.
         try:
+            if no_mic:
+                raise RuntimeError("--no-mic")
             self._stream = sd.Stream(
                 samplerate=SAMPLE_RATE,
                 blocksize=BLOCK,
@@ -341,7 +348,7 @@ class GloveSynth:
             )
             self._has_input = True
         except Exception as exc:
-            print(f"[no mic available, live voice mode disabled: {exc}]")
+            print(f"[output only, live voice mode disabled: {exc}]")
             self._stream = sd.OutputStream(
                 samplerate=SAMPLE_RATE,
                 blocksize=BLOCK,
@@ -432,6 +439,17 @@ class GloveSynth:
             return "  |  ".join(names)
         except Exception:
             return "unknown"
+
+    @property
+    def blocks_rendered(self) -> int:
+        """How many audio blocks the device has actually asked for.
+
+        A stream can start without error and then never call back — on
+        macOS a duplex stream whose microphone permission was never granted
+        does exactly that. Silence with everything reporting healthy is the
+        worst failure to diagnose, so this is here to be checked.
+        """
+        return self._blocks
 
     def start(self) -> None:
         self._stream.start()
@@ -772,6 +790,7 @@ class GloveSynth:
         self._callback(out, frames, time_info, status)
 
     def _callback(self, out: np.ndarray, frames: int, time_info, status) -> None:
+        self._blocks += 1
         # Per-block smoothing of control parameters (~50 ms time constant).
         k = 0.15
         self._freq += (self.target_freq - self._freq) * k
