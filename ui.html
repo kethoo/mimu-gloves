@@ -64,9 +64,39 @@
   #conn.ok::before  { content: "● "; color: var(--accent); }
   #conn.bad::before { content: "● "; color: var(--bad); }
 
-  main { display: grid; grid-template-columns: 340px 1fr; gap: 20px;
+  /* One column now: the instrument rail and a tab bar sit above a single
+     pane, instead of every panel being on screen at once. */
+  main { display: block;
          width: 100%; max-width: var(--wide); }
-  @media (max-width: 740px) { main { grid-template-columns: 1fr; } }
+  .tabs { display: inline-flex; gap: 4px; padding: 4px; margin: 16px 0 14px;
+          background: var(--panel); border: 1px solid var(--line);
+          border-radius: 999px; }
+  .tabs button { border: none; background: transparent; border-radius: 999px;
+                 padding: 9px 22px; color: var(--dim); font-size: 15px; }
+  .tabs button:hover { color: var(--text); background: transparent; }
+  .tabs button.on { background: var(--text); color: var(--bg); }
+  .tabpane[hidden] { display: none; }
+
+  /* Create pane: choices on the left, the sound itself on the right. */
+  .designgrid { display: grid; grid-template-columns: 300px 1fr; gap: 22px; }
+  @media (max-width: 860px) { .designgrid { grid-template-columns: 1fr; } }
+  .step { font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+          color: var(--dim); margin: 0 0 9px; }
+  .engopt { display: block; width: 100%; text-align: left; margin-bottom: 8px;
+            padding: 11px 14px; }
+  .engopt b { display: block; font-weight: 600; font-size: 15px; }
+  .engopt span { display: block; font-size: 13px; color: var(--dim); margin-top: 2px; }
+  .engopt.on span { color: inherit; opacity: .75; }
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  .chips button { border-radius: 999px; padding: 7px 15px; font-size: 14px; }
+  .livebadge { float: right; font-size: 12px; padding: 5px 12px;
+               border-radius: 999px; color: var(--accent);
+               background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .keyrow { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px;
+            margin-top: 12px; }
+  .keyrow button { padding: 16px 0; font-size: 16px; }
+  .keyrow button small { display: block; margin-top: 6px; font-size: 11px;
+                         color: var(--dim); }
 
   .panel { background: var(--panel); border: 1px solid var(--line);
            border-radius: 14px; padding: 16px; }
@@ -284,6 +314,27 @@
 </button>
 
 <main>
+  <div class="panel" style="margin-bottom:0">
+    <div class="instruments" id="instruments" style="align-items:center">
+      <span class="label" style="margin:0 10px 0 0">Instrument</span>
+      <button data-ins="saw">🪚 Saw</button>
+      <button data-ins="organ">🎹 Organ</button>
+      <button data-ins="strings">🎻 Strings</button>
+      <button data-ins="bell">🔔 Bell</button>
+      <button data-ins="flute">🎶 Flute</button>
+      <button data-ins="pluck">🪕 Pluck</button>
+      <button data-ins="guitar">🎸 Guitar</button>
+      <span id="mine" style="display:contents"></span>
+    </div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button data-tab="play" class="on">Play</button>
+    <button data-tab="song">Song</button>
+    <button data-tab="create">Create</button>
+  </div>
+
+  <section class="tabpane" data-pane="play">
   <div class="panel">
     <div class="label">Hand — drag the pad</div>
     <div class="btnrow" style="grid-template-columns:1fr 1fr; margin-bottom:10px">
@@ -318,20 +369,6 @@
     </div>
   </div>
 
-  <div>
-    <div class="panel">
-      <div class="label">Instrument</div>
-      <div class="instruments" id="instruments">
-        <button data-ins="saw">🪚 Saw</button>
-        <button data-ins="organ">🎹 Organ</button>
-        <button data-ins="strings">🎻 Strings</button>
-        <button data-ins="bell">🔔 Bell</button>
-        <button data-ins="flute">🎶 Flute</button>
-        <button data-ins="pluck">🪕 Pluck</button>
-        <button data-ins="guitar">🎸 Guitar</button>
-      </div>
-    </div>
-
     <div class="panel" style="margin-top:16px">
       <div class="label">Voice &amp; modes</div>
       <div class="btnrow">
@@ -360,7 +397,10 @@
       </div>
     </div>
 
-    <div class="panel" style="margin-top:16px">
+  </section>
+
+  <section class="tabpane" data-pane="song" hidden>
+    <div class="panel">
       <div class="label">Song — play a record with the loop hand</div>
       <input id="songsrc" type="text" spellcheck="false"
              placeholder="paste a link, a path like ~/Music/track.mp3, or a .mid">
@@ -393,39 +433,48 @@
       </div>
     </div>
 
-    <div class="panel" style="margin-top:16px">
-      <div class="label">Design your own instrument</div>
-      <div class="hint" style="margin-bottom:6px">Start from one of these,
-        then bend it. They are deliberately not copies of the instruments
-        above.</div>
-      <canvas id="scope" width="820" height="150"
-              style="width:100%;height:150px;display:block;border-radius:9px;
-                     background:var(--btn);margin-bottom:10px"></canvas>
-      <div class="btnrow" id="starters" style="grid-template-columns:repeat(4,1fr)"></div>
-      <div id="keys" style="display:flex;gap:4px;margin:10px 0 2px"></div>
-      <div class="hint" style="margin-bottom:8px">Click a key, or use
-        <kbd>z</kbd><kbd>x</kbd><kbd>c</kbd><kbd>v</kbd><kbd>b</kbd><kbd>n</kbd><kbd>m</kbd>
-        — hear the patch without the gloves.</div>
-      <div class="btnrow" id="engines"></div>
-      <div class="hint" id="englabel" style="margin:8px 0 2px"></div>
-      <div id="knobs"></div>
-      <div class="btnrow" style="grid-template-columns:2fr 1fr 1fr; margin-top:10px">
-        <input id="insname" type="text" spellcheck="false" placeholder="name it">
-        <button id="inssave">save</button>
+  </section>
+
+  <section class="tabpane" data-pane="create" hidden>
+    <div class="panel">
+      <div class="label">Design your own instrument
+        <span class="livebadge">auditions live</span></div>
+      <div class="hint" style="margin:-4px 0 16px">Pick an engine, give it a
+        character, then shape it.</div>
+
+      <div class="designgrid">
+        <div>
+          <p class="step">1 · Engine</p>
+          <div id="engines"></div>
+          <p class="step" style="margin-top:20px">2 · Character</p>
+          <div class="chips" id="starters"></div>
+        </div>
+
+        <div>
+          <p class="step">3 · Shape</p>
+          <canvas id="scope" width="820" height="190"
+                  style="width:100%;height:190px;display:block;border-radius:11px;
+                         background:#13161c"></canvas>
+          <div id="knobs" style="margin-top:12px"></div>
+          <div class="keyrow" id="keys"></div>
+          <div class="hint" style="margin-top:8px">Try it without the gloves —
+            click a key or type the letter.</div>
+        </div>
+      </div>
+
+      <div class="btnrow" style="grid-template-columns:1fr auto auto;
+                                 margin-top:18px; padding-top:16px;
+                                 border-top:1px solid var(--line)">
+        <input id="insname" type="text" spellcheck="false"
+               placeholder="name this sound">
+        <button id="inssave">Save to instruments</button>
         <button id="insstop">stop</button>
       </div>
-      <div id="mine" class="hint" style="margin-top:8px"></div>
-      <div class="hint">
-        Editing auditions live — play while you drag. A <b>string</b> only
-        sounds when something plucks it, so its knobs are heard on the next
-        note; the other three engines change under your fingers.
-        Saved instruments join
-        the list above and are picked by the same 🤚 posture, or keys
-        <kbd>1</kbd>–<kbd>9</kbd>. They live in <code>instruments.json</code>,
-        so they survive a restart.
+      <div id="savedline" class="hint" style="margin-top:8px">
+        Nothing saved yet — saved sounds appear in the instrument rail above.
       </div>
     </div>
-  </div>
+  </section>
 </main>
 
 <footer>
@@ -612,8 +661,8 @@ function knobRow(key, val, lo, hi, onchange, fmt) {
 function buildKnobs() {
   const host = document.getElementById("knobs");
   host.innerHTML = "";
-  document.getElementById("englabel").textContent =
-    DESIGN.engines[patch.engine].label;
+  const lbl = document.getElementById("englabel");
+  if (lbl) lbl.textContent = DESIGN.engines[patch.engine].label;
   for (const k in DESIGN.env) {
     const [, lo, hi] = DESIGN.env[k];
     host.appendChild(knobRow(k, patch[k], lo, hi,
@@ -664,7 +713,7 @@ function pushPatch() {
 function pickEngine(engine) {
   patch = freshPatch(engine);
   buildKnobs(); pushPatch();
-  document.querySelectorAll("#engines button").forEach(
+  document.querySelectorAll("#engines .engopt").forEach(
     b => b.classList.toggle("on", b.dataset.eng === engine));
 }
 // ---- scope --------------------------------------------------------------
@@ -732,9 +781,10 @@ function noteOff(){ sendDesign("noteoff", {}); }
 
 (function initKeys(){
   const host = document.getElementById("keys");
-  AUD_NOTES.forEach(([label, n]) => {
+  const LETTERS = ["z","x","c","v","b","n","m",","];
+  AUD_NOTES.forEach(([label, n], i) => {
     const b = document.createElement("button");
-    b.textContent = label; b.style.flex = "1"; b.style.padding = "12px 0";
+    b.innerHTML = `${label}<small>${LETTERS[i] || ""}</small>`;
     b.addEventListener("mousedown", () => noteOn(n));
     b.addEventListener("mouseup", noteOff);
     b.addEventListener("mouseleave", noteOff);
@@ -752,12 +802,33 @@ function noteOff(){ sendDesign("noteoff", {}); }
   });
 })();
 
+const ENGINE_BLURB = {
+  additive: "stacked sine partials",
+  saws: "detuned saw stack",
+  fm: "metallic, bell-like",
+  string: "plucked — sounds on next note",
+};
+
+// ---- tabs ---------------------------------------------------------------
+// One pane at a time. Everything was on screen at once, which made the page
+// a wall rather than something you move through.
+function setTab(name) {
+  document.querySelectorAll("#tabs button").forEach(
+    b => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll(".tabpane").forEach(
+    s => { s.hidden = s.dataset.pane !== name; });
+  try { localStorage.setItem("mimu.tab", name); } catch (_) {}
+}
+document.querySelectorAll("#tabs button").forEach(
+  b => b.onclick = () => setTab(b.dataset.tab));
+try { setTab(localStorage.getItem("mimu.tab") || "play"); } catch (_) { setTab("play"); }
+
 (function initDesigner(){
   const host = document.getElementById("engines");
-  host.style.gridTemplateColumns = "repeat(4,1fr)";
   for (const e in DESIGN.engines) {
     const b = document.createElement("button");
-    b.textContent = e; b.dataset.eng = e;
+    b.className = "engopt"; b.dataset.eng = e;
+    b.innerHTML = `<b>${e}</b><span>${ENGINE_BLURB[e] || ""}</span>`;
     b.onclick = () => pickEngine(e);
     host.appendChild(b);
   }
@@ -1101,13 +1172,15 @@ function render(s) {
     const mine = Object.keys(s.instrument_list).filter(
       k => !document.querySelector(`[data-ins="${k}"]`) && k !== "(designing)");
     const host = document.getElementById("mine");
-    host.innerHTML = mine.length
-      ? "yours: " + mine.map(n =>
-          `<button data-ins="${n}" style="padding:3px 9px;font-size:13px;margin:2px"
-            class="${n===s.instrument?"on":""}">${n}</button>`).join("")
-      : "nothing saved yet";
+    host.innerHTML = mine.map(n =>
+      `<button data-ins="${n}" class="${n===s.instrument?"on":""}">${n}</button>`
+    ).join("");
     host.querySelectorAll("[data-ins]").forEach(b =>
       b.onclick = () => sendEvent("instrument:" + b.dataset.ins));
+    const saved = document.getElementById("savedline");
+    if (saved) saved.textContent = mine.length
+      ? "saved: " + mine.join(", ") + " — they are in the instrument rail above."
+      : "Nothing saved yet — saved sounds appear in the instrument rail above.";
   }
   $("loopinfo").textContent = s.loop_secs ? "loop: " + s.loop_secs.toFixed(1) + "s" : "no loop yet";
   // A .mid plays through the instruments rather than the loop buffer, so
