@@ -184,6 +184,8 @@ class GloveSynth:
         # built-ins use at most four.
         self._ph = [0.0] * 6
         self._scope = np.zeros(SCOPE_LEN)
+        self._wave_cache: list = []
+        self._wave_for = None
         self._fenv = 0.0        # see _note_on
         self._lfo = 0.0           # vibrato LFO phase (flute)
         self._vib = 0.0           # vibrato LFO phase (finger-controlled)
@@ -349,6 +351,33 @@ class GloveSynth:
                 callback=self._callback,
             )
             self._has_input = False
+
+    def loop_wave(self, points: int = 240) -> list:
+        """Peak envelope of the loaded loop, for the deck's waveform.
+
+        Cached against the buffer it was built from: this walks the whole
+        recording, which for a four-minute track is ten million samples,
+        and the panel asks for it ten times a second.
+        """
+        buf = self._loop_buf
+        if buf is None or len(buf) < 2:
+            return []
+        if self._wave_for is buf and self._wave_cache:
+            return self._wave_cache
+        n = min(points, len(buf))
+        edges = np.linspace(0, len(buf), n + 1).astype(np.intp)
+        peaks = np.maximum.reduceat(np.abs(buf), edges[:-1])
+        top = float(peaks.max()) or 1.0
+        self._wave_cache = [round(float(v / top), 3) for v in peaks]
+        self._wave_for = buf
+        return self._wave_cache
+
+    @property
+    def loop_position(self) -> float:
+        """Seconds into the loop, for the playhead."""
+        if self._loop_buf is None or len(self._loop_buf) < 2:
+            return 0.0
+        return float(self._loop_pos) / SAMPLE_RATE
 
     def scope(self, points: int = 160, bins: int = 56) -> dict:
         """Waveform and spectrum for the panel.

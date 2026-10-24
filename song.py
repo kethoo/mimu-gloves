@@ -115,7 +115,7 @@ def _tidy_error(exc: Exception, url: str) -> str:
     return text.split("\n")[0][:120] or f"could not download {url}"
 
 
-def _download(url: str) -> tuple[pathlib.Path, str]:
+def _download(url: str) -> tuple[pathlib.Path, str, str]:
     """Fetch a link's audio, cached by URL so a second run is instant.
 
     Returns the file and the track's title. The file is named after a hash
@@ -141,9 +141,14 @@ def _download(url: str) -> tuple[pathlib.Path, str]:
 
     cached = _audio_files()
     if cached:
-        title = title_file.read_text().strip() if title_file.exists() else cached[0].stem
+        if title_file.exists():
+            parts = title_file.read_text().split("\n")
+            title = parts[0].strip()
+            artist = parts[1].strip() if len(parts) > 1 else ""
+        else:
+            title, artist = cached[0].stem, ""
         print(f"[song] using cached download: {title}")
-        return cached[0], title
+        return cached[0], title, artist
 
     print(f"[song] downloading {url} ...")
 
@@ -175,14 +180,17 @@ def _download(url: str) -> tuple[pathlib.Path, str]:
     if not got:
         raise RuntimeError(f"download produced no file for {url}")
     title = (info.get("title") or got[0].stem).strip()
-    title_file.write_text(title)
+    # Separate artist where the source knows one: a deck shows them apart,
+    # and "Artist - Title" crammed into one line is not the same thing.
+    artist = (info.get("artist") or info.get("uploader") or "").strip()
+    title_file.write_text(title + ("\n" + artist if artist else ""))
     print(f"[song] got: {title}")
-    return got[0], title
+    return got[0], title, artist
 
 
 def load(src: str, start: float = 0.0, seconds: float | None = None
-         ) -> tuple[np.ndarray, int, str]:
-    """Return (mono samples, sample rate, a name to show).
+         ) -> tuple[np.ndarray, int, str, str]:
+    """Return (mono samples, sample rate, a name to show, the artist or "").
 
     `start` and `seconds` pick a section, which is usually what you want:
     a whole track makes every scrub gesture cover four minutes at once, so
@@ -196,12 +204,12 @@ def load(src: str, start: float = 0.0, seconds: float | None = None
 
     if _is_url(src):
         url = src if src.startswith("http") else "https://" + src
-        path, name = _download(url)
+        path, name, artist = _download(url)
     else:
         path = pathlib.Path(src).expanduser()
         if not path.exists():
             raise FileNotFoundError(f"no such file: {path}")
-        name = path.stem
+        name, artist = path.stem, ""
 
     samples, rate = _decode(path)
     if len(samples) < 2:
@@ -220,7 +228,7 @@ def load(src: str, start: float = 0.0, seconds: float | None = None
     span = len(samples) / rate
     where = f" ({start:g}s..{start + span:g}s of {total:.0f}s)" if start or seconds else ""
     print(f"[song] {name}: {span:.1f}s at {rate} Hz{where}")
-    return samples, rate, name
+    return samples, rate, name, artist
 
 
 def _temp_wav(samples: np.ndarray, rate: int) -> pathlib.Path:

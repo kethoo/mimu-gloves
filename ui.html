@@ -128,6 +128,40 @@
   .advrow { margin-top: 12px; }
   .advrow > button { font-size: 13px; padding: 6px 13px; }
 
+  /* ---- deck ---- */
+  .deck { display: grid; grid-template-columns: 190px 1fr 72px; gap: 22px;
+          align-items: start; margin-top: 18px; }
+  @media (max-width: 820px) { .deck { grid-template-columns: 1fr; } }
+  .vinylwrap { background: #15181e; border-radius: 13px; padding: 16px; }
+  .tonearm { position: absolute; inset: 16px; width: calc(100% - 32px);
+             height: auto; pointer-events: none; }
+  .vinyl { width: 100%; height: auto; display: block;
+           transform-origin: 50% 50%; }
+  /* The record turns because it is playing; the animation is paused rather
+     than removed so it keeps its angle instead of snapping back to zero. */
+  .vinyl.spin { animation: rev 1.8s linear infinite; }
+  .vinyl.hold { animation-play-state: paused; }
+  @keyframes rev { to { transform: rotate(360deg); } }
+  .dartist { color: var(--dim); font-size: 14px; }
+  .dtitle { font-size: 26px; font-weight: 600; margin: 2px 0 12px; }
+  .dtimes { display: flex; justify-content: space-between;
+            font: 12px ui-monospace, monospace; color: var(--dim); }
+  .pitchcol { display: flex; flex-direction: column; align-items: center; }
+  .vfader { writing-mode: vertical-lr; direction: rtl; width: 26px;
+            height: 170px; accent-color: var(--accent); }
+  .dval { font: 12px ui-monospace, monospace; color: var(--dim); margin-top: 8px; }
+  .gestrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+             margin-top: 18px; border-top: 1px solid var(--line);
+             padding-top: 14px; }
+  @media (max-width: 760px) { .gestrow { grid-template-columns: repeat(2, 1fr); } }
+  .gestrow > div { padding: 0 14px; border-left: 1px solid var(--line); }
+  .gestrow > div:first-child { border-left: none; padding-left: 0; }
+  .gestrow b { font-size: 15px; font-weight: 600; }
+  .gestrow span { float: right; color: var(--accent);
+                  font: 13px ui-monospace, monospace; }
+  .gestrow i { display: block; color: var(--dim); font-style: normal;
+               font-size: 13px; margin: 2px 0 8px; }
+
   .keyrow { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px;
             margin-top: 12px; }
   .keyrow button { padding: 16px 0; font-size: 16px; }
@@ -437,35 +471,86 @@
 
   <section class="tabpane" data-pane="song" hidden>
     <div class="panel">
-      <div class="label">Song — play a record with the loop hand</div>
-      <input id="songsrc" type="text" spellcheck="false"
-             placeholder="paste a link, a path like ~/Music/track.mp3, or a .mid">
-      <div class="btnrow" style="grid-template-columns:2fr 1fr; margin-top:8px">
-        <button id="songload" data-icon="play">load into loop</button>
-        <button id="songclear" data-icon="eject">eject</button>
+      <div class="label">Deck A · loop hand
+        <span class="livebadge" id="deckstate">no record</span></div>
+
+      <div class="btnrow" style="grid-template-columns:1fr auto auto; margin:10px 0 0">
+        <input id="songsrc" type="text" spellcheck="false"
+               placeholder="paste a link, a path like ~/Music/track.mp3, or a .mid">
+        <button id="songload" data-icon="play">Load</button>
+        <button id="songclear" data-icon="eject">Eject</button>
       </div>
       <div id="songstatus"></div>
+
+      <div class="deck" id="deck" hidden>
+        <div class="vinylwrap" style="position:relative">
+          <svg class="vinyl" id="vinyl" viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="58" fill="#15181e"/>
+            <g stroke="#2a3038" fill="none">
+              <circle cx="60" cy="60" r="52"/><circle cx="60" cy="60" r="46"/>
+              <circle cx="60" cy="60" r="40"/><circle cx="60" cy="60" r="34"/>
+            </g>
+            <circle cx="60" cy="60" r="24" fill="var(--accent)"/>
+            <circle cx="60" cy="60" r="3" fill="#15181e"/>
+            <text x="60" y="63" text-anchor="middle" font-size="9"
+                  fill="#15181e" font-family="ui-monospace,monospace">MIMU</text>
+          </svg>
+          <!-- The arm is its own layer: inside the record it would turn with
+               it, and a tonearm that spins is a different object entirely. -->
+          <svg class="tonearm" viewBox="0 0 120 120" aria-hidden="true">
+            <line x1="100" y1="20" x2="68" y2="58" stroke="#8b93a1"
+                  stroke-width="3.5" stroke-linecap="round"/>
+            <circle cx="100" cy="20" r="7" fill="#aeb6c2"/>
+            <circle cx="67" cy="59" r="4" fill="var(--accent)"/>
+          </svg>
+        </div>
+
+        <div class="deckmain">
+          <div class="dartist" id="dartist"></div>
+          <div class="dtitle" id="dtitle">—</div>
+          <canvas id="deckwave" width="900" height="110"
+                  style="width:100%;height:110px;display:block"></canvas>
+          <div class="dtimes"><span id="dpos">0:00</span><span id="drem">0:00</span></div>
+          <div class="btnrow" style="grid-template-columns:auto auto auto 1fr auto;
+                                     align-items:center; margin-top:10px">
+            <button id="dback" title="back 5 s">&#9198;</button>
+            <button id="dplay" data-ev="loop">&#9199;</button>
+            <button id="dfwd" title="forward 5 s">&#9197;</button>
+            <span></span>
+            <button data-ev="loop" id="d-loop">Loop <kbd>p</kbd></button>
+          </div>
+        </div>
+
+        <div class="pitchcol">
+          <span class="step" style="margin:0 0 8px">Pitch</span>
+          <input id="dpitch" type="range" min="-50" max="50" value="0"
+                 orient="vertical" class="vfader">
+          <span class="dval" id="dpitchval">0%</span>
+        </div>
+      </div>
+
+      <div class="gestrow" id="gestrow" hidden>
+        <div><b>Roll</b><span id="g-roll">0&deg;</span><i>&rarr; scrub</i>
+          <div class="hbar"><div class="hfill" id="gb-roll"></div></div></div>
+        <div><b>Tilt</b><span id="g-tilt">1.00&times;</span><i>&rarr; speed</i>
+          <div class="hbar"><div class="hfill" id="gb-tilt"></div></div></div>
+        <div><b>Flex</b><span id="g-flex">0.00</span><i>&rarr; volume</i>
+          <div class="hbar"><div class="hfill" id="gb-flex"></div></div></div>
+        <div><b>Flick</b><span id="g-tap">&mdash;</span><i>&rarr; slice</i>
+          <div class="hbar"><div class="hfill" id="gb-tap"></div></div></div>
+      </div>
+
       <div id="melodybar" style="display:none">
         <div class="rowlabel"><span id="melname">—</span><b id="melnote">—</b></div>
         <div class="meltrack"><div id="melfill"></div></div>
       </div>
-      <div class="hint">
-        Whatever loads here replaces the loop buffer, so every loop-hand
-        gesture works on it: roll scrubs, tilt stretches 0.5×–2×, a fist
-        freezes, a flick fires the slice under your hand.
-        Add <code>#t=60</code> to a link, or <code>#60</code> to a path, to
-        start 60 s in — scrubbing a whole track means one wrist rotation
-        covers four minutes.
-        A <b>.mid</b> is different: it is notes, not a recording, so it
-        plays through your own instruments. Tilt then transposes the tune
-        instead of picking a note, the loop hand pulls the tempo, and the
-        posture that changes instrument changes what is playing it.
-        Loading a record <b>mutes the synth</b>, so your hands shape the
-        record rather than playing over it — <kbd>m</kbd> brings the
-        instrument back if you want to solo on top.
-        <b>Eject</b> stops it and empties the buffer; <kbd>p</kbd> just
-        pauses. Reloading this page does not stop anything — the sound comes
-        from the python process, and this is only a window onto it.
+
+      <div class="hint" style="margin-top:12px">
+        Roll scrubs, tilt sets speed, a fist freezes, a flick fires the slice
+        under your hand. Add <code>#60-90</code> to take a window of a long
+        track. A <b>.mid</b> loads as notes instead and plays through your
+        instruments. Loading a record mutes the synth; <kbd>m</kbd> brings it
+        back to play over the top.
       </div>
     </div>
 
@@ -637,6 +722,26 @@ songSrc.addEventListener("keydown", (e) => {
 });
 // Eject stops the audio as well as emptying the box. Clearing only the
 // text looked like it had done something while the song kept playing.
+const dp = document.getElementById("dpitch");
+if (dp) dp.addEventListener("input", () => {
+  const pct = parseInt(dp.value, 10);
+  document.getElementById("dpitchval").textContent =
+    (pct > 0 ? "+" : "") + pct + "%";
+  // The loop hand's tilt owns speed; this is that same control, by hand.
+  send({type: "pose", hand: 2, pitch: pct * 0.9});
+});
+const nudge = secs => {
+  if (!deckDur) return;
+  const to = Math.max(0, Math.min(1, (deckPos + secs) / deckDur));
+  // Seeking is what roll does, so ask for the same thing a wrist would.
+  send({type: "pose", hand: 2, roll: to * 90 - 45});
+};
+const db = document.getElementById("dback"), df = document.getElementById("dfwd");
+if (db) db.onclick = () => nudge(-5);
+if (df) df.onclick = () => nudge(5);
+const dpl = document.getElementById("dplay");
+if (dpl) dpl.onclick = () => sendEvent("loop");
+
 document.getElementById("songclear").onclick = () => {
   sendEvent("song_clear");
   songSrc.value = "";
@@ -924,6 +1029,77 @@ function pickEngine(engine, push = true) {
   document.querySelectorAll("#engines .engopt").forEach(
     b => b.classList.toggle("on", b.dataset.eng === engine));
 }
+
+// ---- deck ---------------------------------------------------------------
+// The waveform is a peak envelope the backend sends once per load; only the
+// playhead moves every frame.
+let deckWave = null, deckPos = 0, deckDur = 0;
+
+function fmt(t) {
+  if (!isFinite(t) || t < 0) t = 0;
+  return Math.floor(t / 60) + ":" + String(Math.floor(t % 60)).padStart(2, "0");
+}
+function drawDeck() {
+  const c = document.getElementById("deckwave");
+  if (c) {
+    const g = c.getContext("2d"), W = c.width, H = c.height, mid = H / 2;
+    g.clearRect(0, 0, W, H);
+    if (deckWave && deckWave.length) {
+      const n = deckWave.length, bw = W / n;
+      const played = deckDur > 0 ? deckPos / deckDur : 0;
+      for (let i = 0; i < n; i++) {
+        const h = Math.max(2, deckWave[i] * (H - 10));
+        // Played solid, the rest ghosted: where you are should be readable
+        // without hunting for the playhead line.
+        g.fillStyle = (i / n) <= played ? cssVar("--accent") : cssVar("--gtrack");
+        g.fillRect(i * bw + bw * 0.18, mid - h / 2, Math.max(1, bw * 0.64), h);
+      }
+      const x = played * W;
+      g.strokeStyle = cssVar("--text"); g.lineWidth = 2;
+      g.beginPath(); g.moveTo(x, 4); g.lineTo(x, H - 4); g.stroke();
+    }
+  }
+  requestAnimationFrame(drawDeck);
+}
+requestAnimationFrame(drawDeck);
+
+function renderDeck(d) {
+  const deck = document.getElementById("deck");
+  const row = document.getElementById("gestrow");
+  if (!deck) return;
+  deck.hidden = !d; if (row) row.hidden = !d;
+  const badge = document.getElementById("deckstate");
+  if (badge) badge.textContent =
+    !d ? "no record" : d.frozen ? "frozen" : d.playing ? "playing" : "paused";
+  if (!d) { deckWave = null; return; }
+  if (d.wave && d.wave.length) deckWave = d.wave;
+  deckPos = d.pos; deckDur = d.dur;
+  document.getElementById("dartist").textContent = d.artist || "";
+  document.getElementById("dtitle").textContent = d.title || "—";
+  document.getElementById("dpos").textContent = fmt(d.pos);
+  document.getElementById("drem").textContent = "-" + fmt(d.dur - d.pos);
+  const v = document.getElementById("vinyl");
+  v.classList.add("spin");
+  // Paused rather than removed, so it keeps its angle instead of snapping
+  // back to zero every time you stop.
+  v.classList.toggle("hold", !d.playing);
+  // Turn at the playback rate, so the picture agrees with what you hear.
+  v.style.animationDuration = (1.8 / Math.max(0.1, d.rate || 1)).toFixed(2) + "s";
+}
+
+function renderGestures(s) {
+  const put = (id, txt, frac) => {
+    const e = document.getElementById(id); if (e) e.textContent = txt;
+    const b = document.getElementById("gb-" + id.slice(2));
+    if (b) b.style.width = Math.max(0, Math.min(1, frac)) * 100 + "%";
+  };
+  const h = s.loop_hand || {};
+  put("g-roll", Math.round(s.roll || 0) + "°", ((s.roll || 0) + 45) / 90);
+  put("g-tilt", (h.speed || 1).toFixed(2) + "×", (Math.log2(h.speed || 1) + 1) / 2);
+  put("g-flex", (s.flex == null ? 0 : s.flex).toFixed(2), s.flex || 0);
+  put("g-tap", h.mode === "slices" ? "armed" : "—", h.mode === "slices" ? 1 : 0.08);
+}
+
 // ---- scope --------------------------------------------------------------
 // Waveform on top, spectrum underneath. This is the part that makes a patch
 // legible: you can see a filter close, see resonance grow a peak, see an
@@ -1381,6 +1557,8 @@ function render(s) {
   document.querySelectorAll("[data-ins]").forEach((b) =>
     b.classList.toggle("on", b.dataset.ins === s.instrument));
   if (s.scope) scopeData = s.scope;
+  renderDeck(s.deck);
+  renderGestures(s);
   // Adopt a patch the backend picked for us (a character chip), then let
   // the knobs and the advanced sliders re-read it.
   if (pendingStarter && s.design_patch) {

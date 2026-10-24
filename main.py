@@ -702,6 +702,19 @@ def main() -> None:
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,
                     "loop_label": synth.loop_label,
+                    # The deck's own readout. Only when a record is
+                    # loaded — the waveform is 240 numbers and nothing looks
+                    # at it otherwise.
+                    "deck": None if not synth.has_record else {
+                        "title": synth.loop_label,
+                        "artist": song_state.get("artist", ""),
+                        "pos": synth.loop_position,
+                        "dur": synth.loop_seconds,
+                        "playing": synth.loop_on and not synth.freeze_on,
+                        "frozen": synth.freeze_on,
+                        "rate": synth.target_rate,
+                        "wave": synth.loop_wave(),
+                    },
                     "song_status": song_state["status"],
                     "song_busy": song_state["busy"],
                     "melody": None if seq is None else {
