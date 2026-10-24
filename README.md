@@ -18,6 +18,10 @@ python main.py          # or play the "glove" with your keyboard
 python main.py --demo   # scripted gesture demo, just listen
 ```
 
+**Windows:** everything runs except the keyboard simulator, which needs a
+POSIX terminal — use `--web` and drive the hands from the browser panel.
+
+
 ## Browser frontend (`--web`)
 
 `main.py --web` opens `ui.html` and starts a WebSocket server on

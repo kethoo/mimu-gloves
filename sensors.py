@@ -9,13 +9,15 @@ BleGloveSource in main.py and nothing else changes.
 from __future__ import annotations
 
 import math
-import select
 import sys
-import termios
 import threading
 import time
-import tty
 from collections import deque
+
+# termios, tty and a select() on stdin are POSIX only, and they are needed
+# by exactly one method: the keyboard simulator's key reader. Imported at
+# the top they stopped the whole project loading on Windows, where
+# `--ble --web` needs none of it. They are imported where they are used.
 from dataclasses import dataclass, field
 
 
@@ -244,6 +246,17 @@ class SimulatedGloveSource(GloveSource):
         self._smooth_toward_target(self.RATE)
 
     def _read_keys(self) -> None:
+        try:
+            import select
+            import termios
+            import tty
+        except ImportError:
+            # Windows. The pad, the sliders and the buttons in the browser
+            # drive this source just as well, so say so once and let the
+            # rest of the instrument run.
+            print("[keyboard control needs a POSIX terminal — use --web, "
+                  "or the buttons in the browser panel]")
+            return
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
