@@ -133,15 +133,62 @@
           align-items: start; margin-top: 18px; }
   @media (max-width: 820px) { .deck { grid-template-columns: 1fr; } }
   .vinylwrap { background: #15181e; border-radius: 13px; padding: 16px; }
-  .tonearm { position: absolute; inset: 16px; width: calc(100% - 32px);
-             height: auto; pointer-events: none; }
-  .vinyl { width: 100%; height: auto; display: block;
-           transform-origin: 50% 50%; }
-  /* The record turns because it is playing; the animation is paused rather
-     than removed so it keeps its angle instead of snapping back to zero. */
-  .vinyl.spin { animation: rev 1.8s linear infinite; }
-  .vinyl.hold { animation-play-state: paused; }
+  /* ---- platter ----
+     Grooves are a repeating radial gradient rather than a few drawn
+     circles: at a couple of pixels per ring it reads as vinyl instead of
+     as four concentric rings. The sheen is a conic gradient that does NOT
+     turn, so it behaves like a reflection on the surface rather than a
+     mark painted on the record. */
+  .platter { position: relative; width: 100%; aspect-ratio: 1; }
+  .pl-base { position: absolute; inset: 0; border-radius: 50%;
+             background: var(--line); }
+  .pl-grooves {
+    position: absolute; inset: 7px; border-radius: 50%;
+    background-color: #1a1e26;
+    background-image: repeating-radial-gradient(circle at 50% 50%,
+      #13161c 0 2px, #222733 2px 3px);
+  }
+  .pl-sheen {
+    position: absolute; inset: 7px; border-radius: 50%; opacity: .6;
+    pointer-events: none;
+    background: conic-gradient(from 200deg at 50% 50%,
+      transparent 0deg, color-mix(in srgb, var(--accent) 40%, transparent) 40deg,
+      transparent 90deg, transparent 190deg,
+      color-mix(in srgb, var(--accent) 24%, transparent) 230deg, transparent 290deg);
+  }
+  .pl-label {
+    position: absolute; left: 50%; top: 50%; width: 36%; aspect-ratio: 1;
+    margin: -18% 0 0 -18%; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--accent); color: var(--bg);
+    font: 700 9px/1 ui-monospace, monospace; letter-spacing: .2em;
+  }
+  /* Sits above the hole, the way the text on a real label does. A percentage
+     here is a percentage of the 9px line and moves it about two pixels,
+     which is not enough to clear a 10px spindle — so it is placed, not
+     nudged. */
+  .pl-label { position: absolute; }
+  .pl-label span { position: absolute; top: 22%; left: 0; right: 0;
+                   text-align: center; }
+  /* Spindle on top of the label and NOT turning: it is the hole the record
+     sits on, not part of the record. */
+  .pl-spindle {
+    position: absolute; left: 50%; top: 50%; width: 10px; height: 10px;
+    margin: -5px 0 0 -5px; border-radius: 50%;
+    background: var(--bg); box-shadow: 0 0 0 2px var(--line);
+  }
+  .spin { animation: rev 2.4s linear infinite; }
+  .hold { animation-play-state: paused; }
   @keyframes rev { to { transform: rotate(360deg); } }
+
+  .pl-pivot { position: absolute; right: -4px; top: -4px; width: 20px;
+              height: 20px; border-radius: 50%; background: #8b93a1;
+              box-shadow: 0 0 0 5px var(--line); }
+  .pl-arm { position: absolute; right: 8px; top: 8px; width: 4px;
+            height: 80%; border-radius: 2px; background: #9aa2b0;
+            transform-origin: 50% 0; transition: transform .5s ease; }
+  .pl-head { position: absolute; bottom: -3px; left: -3px; width: 10px;
+             height: 12px; border-radius: 2px; background: var(--text); }
   .dartist { color: var(--dim); font-size: 14px; }
   .dtitle { font-size: 26px; font-weight: 600; margin: 2px 0 12px; }
   .dtimes { display: flex; justify-content: space-between;
@@ -483,32 +530,16 @@
       <div id="songstatus"></div>
 
       <div class="deck" id="deck" hidden>
-        <div class="vinylwrap" style="position:relative">
-          <svg class="vinyl" id="vinyl" viewBox="0 0 120 120">
-            <circle cx="60" cy="60" r="58" fill="#15181e"/>
-            <g stroke="#2a3038" fill="none">
-              <circle cx="60" cy="60" r="52"/><circle cx="60" cy="60" r="46"/>
-              <circle cx="60" cy="60" r="40"/><circle cx="60" cy="60" r="34"/>
-            </g>
-            <!-- The label is warm rather than the accent teal: the accent
-                 is already the waveform, the knobs and every selected
-                 button, so a teal label read as more of the same instead of
-                 as a part of the record. Amber is also what a record label
-                 actually looks like. -->
-            <circle cx="60" cy="60" r="24" fill="#e2a33c"/>
-            <circle cx="60" cy="60" r="23" fill="none" stroke="#b9802a"/>
-            <circle cx="60" cy="60" r="3.2" fill="#f3f5f9"/>
-            <text x="60" y="63" text-anchor="middle" font-size="9"
-                  fill="#4a3312" font-family="ui-monospace,monospace">MIMU</text>
-          </svg>
-          <!-- The arm is its own layer: inside the record it would turn with
-               it, and a tonearm that spins is a different object entirely. -->
-          <svg class="tonearm" viewBox="0 0 120 120" aria-hidden="true">
-            <line x1="100" y1="20" x2="68" y2="58" stroke="#8b93a1"
-                  stroke-width="3.5" stroke-linecap="round"/>
-            <circle cx="100" cy="20" r="7" fill="#aeb6c2"/>
-            <circle cx="67" cy="59" r="4" fill="var(--accent)"/>
-          </svg>
+        <div class="vinylwrap">
+          <div class="platter">
+            <div class="pl-base"></div>
+            <div class="pl-grooves spin" id="plgrooves"></div>
+            <div class="pl-sheen"></div>
+            <div class="pl-label spin" id="pllabel"><span>MIMU</span></div>
+            <div class="pl-spindle"></div>
+            <div class="pl-pivot"></div>
+            <div class="pl-arm" id="plarm"><div class="pl-head"></div></div>
+          </div>
         </div>
 
         <div class="deckmain">
@@ -1084,13 +1115,26 @@ function renderDeck(d) {
   document.getElementById("dtitle").textContent = d.title || "—";
   document.getElementById("dpos").textContent = fmt(d.pos);
   document.getElementById("drem").textContent = "-" + fmt(d.dur - d.pos);
-  const v = document.getElementById("vinyl");
-  v.classList.add("spin");
-  // Paused rather than removed, so it keeps its angle instead of snapping
-  // back to zero every time you stop.
-  v.classList.toggle("hold", !d.playing);
-  // Turn at the playback rate, so the picture agrees with what you hear.
-  v.style.animationDuration = (1.8 / Math.max(0.1, d.rate || 1)).toFixed(2) + "s";
+  // Grooves and label turn together; the sheen and the spindle do not,
+  // because one is a reflection on the surface and the other is the hole
+  // the record sits on.
+  const dur = (2.4 / Math.max(0.1, d.rate || 1)).toFixed(2) + "s";
+  for (const id of ["plgrooves", "pllabel"]) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    // Paused rather than removed, so it keeps its angle instead of
+    // snapping back to zero every time you stop.
+    el.classList.toggle("hold", !d.playing);
+    el.style.animationDuration = dur;
+  }
+  // The arm tracks the track: it starts at the rim and walks inward as the
+  // record plays, which is the one part of a turntable that tells you where
+  // you are without reading anything.
+  const arm = document.getElementById("plarm");
+  if (arm && d.dur > 0) {
+    const prog = Math.max(0, Math.min(1, d.pos / d.dur));
+    arm.style.transform = `rotate(${(16 + prog * 18).toFixed(1)}deg)`;
+  }
 }
 
 function renderGestures(s) {
