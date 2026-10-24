@@ -83,7 +83,7 @@ because otherwise this hand has nothing to do with someone else's recording.
 | Gesture | Controls | Notes |
 | --- | --- | --- |
 | ↕️ **Tilt up/down** | Musical pitch | Quantized to the scene's scale. ±45° covers the full range |
-| ↪️ **Rotate wrist (roll)** | Brightness | Filter cutoff, 200 Hz → 6 kHz, follows the note so low tilt never buries high pitches. **With a record loaded it sweeps a lowpass over the record instead** (200 Hz → 18 kHz) — never over a live mic |
+| ↪️ **Rotate wrist (roll)** | Brightness | Filter cutoff, 200 Hz → 6 kHz, follows the note so low tilt never buries high pitches. **With a record loaded it sweeps a lowpass over the record instead**: open with the hand level or rolled right, closing to 200 Hz as you roll left — the centre-detent behaviour of a DJ filter, so a record plays unfiltered until you ask for it. Never over a live mic |
 | 👈 **Point left/right** | Stereo pan | |
 | 🤏 **Index bend** | Volume | 34 dB curve, so the whole travel is audible |
 | **Middle bend** | Vibrato depth | |

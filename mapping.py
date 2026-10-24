@@ -275,8 +275,13 @@ def apply(frame: SensorFrame, synth: GloveSynth,
     # on someone else's recording, and the classic filter sweep. Only over a
     # record: on a live mic it would mean this hand reshaping the other
     # hand's voice, which is exactly what the split chains prevent.
+    # Open at rest, and only closing as the wrist rolls one way — the
+    # centre-detent behaviour of a DJ filter. Spreading the sweep across the
+    # whole range instead put a lowpass at 1.9 kHz on a level hand and about
+    # 3 kHz on a hand at its natural angle, so a full mix arrived muffled
+    # and you had to hold your wrist rolled over just to hear the record.
     synth.target_voice_cutoff = (
-        CUTOFF_LO * math.exp(roll_u * math.log(VOICE_CUTOFF_HI / CUTOFF_LO))
+        CUTOFF_LO * (VOICE_CUTOFF_HI / CUTOFF_LO) ** min(roll_u / 0.5, 1.0)
         if synth.has_record else 20000.0)
 
     # index finger bend -> volume, like a breath controller. Without a flex
