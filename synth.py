@@ -13,10 +13,18 @@ import sounddevice as sd
 SAMPLE_RATE = 44100
 BLOCK = 256  # ~6 ms of audio per callback
 
-# How far the smoothed scrub has to move before the playhead jumps to it.
-# Low enough that a deliberate twist seeks immediately, high enough that
-# sensor noise on a still hand does not keep re-seeking and stuttering.
-SEEK_MIN_MOVE = 0.004
+# How far the smoothed scrub has to move before the playhead jumps to it,
+# in scrub units where 1.0 is the whole 90 degrees of roll.
+#
+# 0.004 was 0.36 degrees, which is less than a hand trembles: measured, a
+# glove lying completely still drifts 3.6 degrees, and a hand trying to
+# hold a position moves several. The playhead was being dragged back to
+# almost the same spot continuously, so the same fraction of a second
+# replayed over and over and sounded like a very short loop.
+#
+# 0.025 is 2.25 degrees — still a fortieth of the gesture, so a deliberate
+# twist seeks immediately, while holding a position lets the track run.
+SEEK_MIN_MOVE = 0.025
 SEEK_FADE = 0.006          # seconds of fade-in after a jump, to kill the click
 # Above this the voice lowpass is bypassed rather than run wide open.
 FILTER_OPEN = 15000.0
