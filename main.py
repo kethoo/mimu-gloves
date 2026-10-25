@@ -57,6 +57,19 @@ RETRIGGER_MIN = 0.18
 _design_state = {"last": 0.0, "auditioning": False}
 
 
+def _reload_customs(synth) -> None:
+    """Pick the store back up off disk without losing the patch being edited.
+
+    reload_customs replaces the whole dict, and the draft lives in that dict
+    under DESIGN_SLOT rather than in the file, so it has to be put back or
+    saving one instrument silences the one you are still working on.
+    """
+    keep = synth.customs.get(DESIGN_SLOT)
+    synth.reload_customs()
+    if keep is not None:
+        synth.customs[DESIGN_SLOT] = keep
+
+
 def _handle_design(msg: dict, synth) -> None:
     """Apply one message from the instrument designer.
 
@@ -95,17 +108,22 @@ def _handle_design(msg: dict, synth) -> None:
                 synth._note_on()
         elif op == "save" and isinstance(patch, dict):
             instruments.save(name, patch)
-            keep = synth.customs.get(DESIGN_SLOT)
-            synth.reload_customs()
-            if keep is not None:
-                synth.customs[DESIGN_SLOT] = keep
+            _reload_customs(synth)
             synth.set_instrument(name)
         elif op == "delete":
-            instruments.delete(name)
-            keep = synth.customs.get(DESIGN_SLOT)
-            synth.reload_customs()
-            if keep is not None:
-                synth.customs[DESIGN_SLOT] = keep
+            # Deleting rewrites the store, so the patch is gone the moment
+            # this returns. Keep the last one: the × in the rail is a few
+            # pixels from the name, and one stray click should not be the
+            # end of an instrument. One slot is enough for that.
+            doomed = synth.customs.get(name)
+            if instruments.delete(name) and doomed is not None:
+                _design_state["trash"] = (name, doomed)
+            _reload_customs(synth)
+        elif op == "undelete":
+            gone = _design_state.pop("trash", None)
+            if gone is not None:
+                instruments.save(*gone)
+                _reload_customs(synth)
         elif op == "note":
             # Audition without the gloves. Every synth editor can play
             # itself; ours could only be heard by holding a fist, so you
