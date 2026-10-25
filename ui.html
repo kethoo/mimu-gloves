@@ -210,6 +210,15 @@
                  line-height: 1.35; }
   .mode.on { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
 
+  /* Key hints as pills rather than a run-on sentence: they are a legend,
+     and a legend is scanned rather than read. */
+  .keypills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px;
+              padding-top: 14px; border-top: 1px solid var(--line); }
+  .keypills span { display: inline-flex; align-items: center; gap: 8px;
+                   border: 1px solid var(--line); border-radius: 999px;
+                   padding: 6px 14px 6px 8px; font-size: 13px;
+                   color: var(--dim); }
+
   /* ---- platter ----
      Grooves are a repeating radial gradient rather than a few drawn
      circles: at a couple of pixels per ring it reads as vinyl instead of
@@ -348,9 +357,19 @@
   button:hover { background: var(--btn-hover); }
   button.on { border-color: var(--accent); color: var(--accent); }
   button.rec.on { border-color: var(--hot); color: var(--hot); }
-  #punch { width: 100%; margin-top: 10px; padding: 14px; font-size: 16px;
-           background: var(--punch); border-color: var(--punch-line); }
-  #punch:active { background: var(--hot); color: #12141a; }
+  /* The one control you hit rather than set, so it is sized to be hit —
+     the others are 40px tall and chosen by reading them. */
+  #punch { width: 100%; margin-top: 18px; padding: 34px 14px; border-radius: 13px;
+           background: var(--punch); border-color: var(--punch-line);
+           display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  #punch .ptitle { font-size: 34px; font-weight: 700; letter-spacing: .3em;
+                   line-height: 1; color: var(--hot); padding-left: .3em; }
+  #punch .psub { font-size: 13px; letter-spacing: .1em; text-transform: uppercase;
+                 color: color-mix(in srgb, var(--hot) 78%, var(--text)); }
+  #punch .iicon { width: 22px; height: 22px; color: var(--hot); opacity: .9; }
+  #punch:active { background: var(--hot); }
+  #punch:active .ptitle, #punch:active .psub, #punch:active .iicon {
+    color: var(--bg); }
 
   /* auto-fit so adding an instrument needs no CSS change and it still wraps
      sensibly on a phone */
@@ -642,10 +661,17 @@
       </div>
     </div>
 
-    <button id="punch" data-icon="punch">PUNCH (space)</button>
-    <div class="hint">
-      <kbd>space</kbd> wrist flick, <kbd>n</kbd> next scene,
-      <kbd>c</kbd> recalibrate flex, <kbd>1</kbd>–<kbd>7</kbd> instruments.
+    <button id="punch" data-icon="punch">
+      <span class="ptitle">PUNCH</span>
+      <span class="psub">flick wrist &middot; or press <kbd>space</kbd></span>
+    </button>
+    <div class="keypills">
+      <span><kbd>space</kbd> wrist flick &middot; punch</span>
+      <span><kbd>n</kbd> next scene</span>
+      <span><kbd>c</kbd> recalibrate flex</span>
+      <span><kbd>1</kbd>–<kbd>7</kbd> instruments</span>
+    </div>
+    <div class="hint" style="margin-top:8px">
       Each card's letter is its key. Live voice: wear headphones, speak,
       roll = pitch, motion = echo.
     </div>
