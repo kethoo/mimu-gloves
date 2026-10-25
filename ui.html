@@ -373,8 +373,16 @@
 
   /* auto-fit so adding an instrument needs no CSS change and it still wraps
      sensibly on a phone */
-  .instruments { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
-  .instruments button { padding: 12px 4px; }
+  /* Wraps rather than squeezing. As a grid of equal columns, saving an
+     instrument made every button narrower and the row re-fitted itself on
+     each addition; a wrapping row leaves the seven where they are and puts
+     the new one on the next line. */
+  .instruments { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .instruments button { padding: 12px 18px; flex: 0 0 auto; }
+  /* The saved ones sit in the same row, after a gap that says they are
+     yours rather than built in. */
+  #mine { display: contents; }
+  #mine button::before { content: "\00b7"; margin-right: 8px; color: var(--dim); }
 
   footer { width: 100%; max-width: var(--wide); margin-top: 18px; display: flex;
            gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--dim); }
@@ -1436,6 +1444,11 @@ function noteOff(){ sendDesign("noteoff", {}); }
   });
 })();
 
+// The seven that ship in the markup. Captured once, before anything is
+// added, so "is this one of mine" never depends on what is on screen.
+const BUILTIN_INSTRUMENTS = new Set(
+  [...document.querySelectorAll("[data-ins]")].map(b => b.dataset.ins));
+
 const ENGINE_BLURB = {
   additive: "stacked sine partials",
   saws: "detuned saw stack",
@@ -1852,14 +1865,23 @@ function render(s) {
     });
   }
   if (s.instrument_list) {
-    const mine = Object.keys(s.instrument_list).filter(
-      k => !document.querySelector(`[data-ins="${k}"]`) && k !== "(designing)");
+    // Against the built-in names, NOT against the DOM. Filtering on
+    // "does a button already exist" excluded the custom instrument as soon
+    // as it had been drawn, so the next frame emptied the rail and the one
+    // after drew it again — it flickered on and off ten times a second.
+    const mine = Object.keys(s.instrument_list)
+      .filter(k => !BUILTIN_INSTRUMENTS.has(k) && k !== "(designing)");
     const host = document.getElementById("mine");
-    host.innerHTML = mine.map(n =>
-      `<button data-ins="${n}" class="${n===s.instrument?"on":""}">${n}</button>`
-    ).join("");
-    host.querySelectorAll("[data-ins]").forEach(b =>
-      b.onclick = () => sendEvent("instrument:" + b.dataset.ins));
+    // Rebuilt only when the set changes: replacing the buttons on every
+    // state message throws away the one under the pointer.
+    const sig = mine.join("\u0000");
+    if (host.dataset.sig !== sig) {
+      host.dataset.sig = sig;
+      host.innerHTML = mine.map(n =>
+        `<button data-ins="${n}">${n}</button>`).join("");
+      host.querySelectorAll("[data-ins]").forEach(b =>
+        b.onclick = () => sendEvent("instrument:" + b.dataset.ins));
+    }
     const saved = document.getElementById("savedline");
     if (saved) saved.textContent = mine.length
       ? "saved: " + mine.join(", ") + " — they are in the instrument rail above."
