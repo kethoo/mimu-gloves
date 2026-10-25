@@ -326,6 +326,14 @@ def handle_event(event: str, synth: GloveSynth,
             synth.trigger_slice()
         else:
             synth.pluck()
+    elif event == "gate_on":
+        # What the fist posture does. Reachable from the panel too, because
+        # a glove with a dead flex channel cannot make that posture at all.
+        synth.set_gate(True)
+    elif event == "gate_off":
+        synth.set_gate(False)
+    elif event == "instrument_next":
+        synth.next_instrument()
     elif event == "scene":
         next_scene(synth, st)
     elif event == "record":

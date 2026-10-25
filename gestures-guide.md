@@ -337,8 +337,12 @@ the controls drive.
 Every one of these is also a button in the browser panel, including **eject**
 for a loaded record and **↻ recalibrate flex**.
 
-In the browser the same applies — click **🎹 Live hand** or **🔁 Loop hand**,
-then drag the pad and move the sliders.
+In the browser both hands are on screen at once, each with its own pad and
+its own three sliders — there is no hand to select. The live pad is roll
+(brightness) against tilt (pitch); the loop pad is roll (scrub) against
+tilt (speed). **sound on**, **sound off** and **next instrument** are the
+three postures as buttons, for a glove whose flex sensors cannot make
+them.
 
 ---
 
