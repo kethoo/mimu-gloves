@@ -177,6 +177,39 @@
      name — so its sliders should not come out in the live hand's teal. */
   .padcard[data-hand="2"] .padsliders input { accent-color: var(--warm); }
 
+  /* ---- mode cards ----
+     Three groups with a rule between them, because ten buttons in one grid
+     is a list you have to read rather than a thing you can scan. */
+  .modegrid { display: grid; grid-template-columns: repeat(3, 1fr);
+              gap: 0; margin-top: 14px; }
+  @media (max-width: 900px) { .modegrid { grid-template-columns: 1fr; } }
+  .modegroup { padding: 0 20px; border-left: 1px solid var(--line); }
+  .modegroup:first-child { padding-left: 0; border-left: none; }
+  .modegroup:last-child { padding-right: 0; }
+  @media (max-width: 900px) {
+    .modegroup { border-left: none; padding: 0 0 18px; }
+  }
+  .modehead { display: flex; align-items: baseline; justify-content: space-between;
+              gap: 10px; margin-bottom: 12px; }
+  .modehead b { font-size: 18px; font-weight: 600; }
+  .modehead span { font-size: 13px; color: var(--dim); }
+  .modecards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .mode { position: relative; text-align: left; padding: 12px 13px 13px;
+          border-radius: 11px; display: block; }
+  .mode .mkey { font: 11px ui-monospace, monospace; padding: 2px 6px;
+                border-radius: 5px; background: var(--btn-hover);
+                border: 1px solid var(--line); color: var(--dim); }
+  /* A dot rather than only a border, so "on" survives being read quickly. */
+  .mode .mdot { position: absolute; top: 14px; right: 13px; width: 8px;
+                height: 8px; border-radius: 50%; background: var(--gtrack); }
+  .mode.on .mdot { background: var(--accent); }
+  .mode .mname { display: block; font-size: 17px; font-weight: 600;
+                 margin: 14px 0 3px; }
+  .mode .mname .iicon { margin-right: 7px; }
+  .mode .mdesc { display: block; font-size: 14px; color: var(--dim);
+                 line-height: 1.35; }
+  .mode.on { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+
   /* ---- platter ----
      Grooves are a repeating radial gradient rather than a few drawn
      circles: at a couple of pixels per ring it reads as vinyl instead of
@@ -564,28 +597,57 @@
   </div>
 
   <div class="panel" style="margin-top:16px">
-    <div class="label">Voice &amp; modes</div>
-    <div class="btnrow">
-      <button class="rec" data-ev="record" data-icon="record">record (v)</button>
-      <button class="rec" data-ev="overdub" data-icon="overdub">overdub (o)</button>
-      <button data-ev="loop" id="b-loop" data-icon="loop">loop (p)</button>
-      <button data-ev="granular" id="b-granular" data-icon="granular">granular (g)</button>
-      <button data-ev="slices" id="b-slices" data-icon="slices">slices (b)</button>
-      <button data-ev="freeze" id="b-freeze" data-icon="freeze">freeze (f)</button>
-      <button data-ev="reverse" id="b-reverse" data-icon="reverse">reverse (j)</button>
-      <button data-ev="pitchlock" id="b-pitchlock" data-icon="pitch">pitch only (k)</button>
-      <button data-ev="mute" id="b-drone" data-icon="speaker">instrument (m)</button>
-      <button data-ev="live" id="b-live" class="rec" data-icon="mic">live voice (l)</button>
+    <div class="padhead" style="margin-bottom:0">
+      <span class="label">Voice &amp; modes</span>
+      <span class="padang" id="modecount">0 active</span>
     </div>
+
+    <div class="modegrid">
+      <div class="modegroup">
+        <div class="modehead"><b>Capture</b><span>Record what you play</span></div>
+        <div class="modecards">
+          <button class="mode" data-ev="record" id="b-record" data-icon="record"
+                  data-name="Record" data-desc="start a new take"></button>
+          <button class="mode" data-ev="overdub" id="b-overdub" data-icon="overdub"
+                  data-name="Overdub" data-desc="layer on top"></button>
+          <button class="mode" data-ev="loop" id="b-loop" data-icon="loop"
+                  data-name="Loop" data-desc="repeat the take"></button>
+        </div>
+      </div>
+
+      <div class="modegroup">
+        <div class="modehead"><b>Texture</b><span>Bend the sound</span></div>
+        <div class="modecards">
+          <button class="mode" data-ev="granular" id="b-granular" data-icon="granular"
+                  data-name="Granular" data-desc="tiny grains"></button>
+          <button class="mode" data-ev="slices" id="b-slices" data-icon="slices"
+                  data-name="Slices" data-desc="chop to beats"></button>
+          <button class="mode" data-ev="freeze" id="b-freeze" data-icon="freeze"
+                  data-name="Freeze" data-desc="hold a moment"></button>
+          <button class="mode" data-ev="reverse" id="b-reverse" data-icon="reverse"
+                  data-name="Reverse" data-desc="play backwards"></button>
+        </div>
+      </div>
+
+      <div class="modegroup">
+        <div class="modehead"><b>Voice</b><span>What the hand controls</span></div>
+        <div class="modecards">
+          <button class="mode" data-ev="pitchlock" id="b-pitchlock" data-icon="pitch"
+                  data-name="Pitch only" data-desc="tilt without tempo"></button>
+          <button class="mode" data-ev="live" id="b-live" data-icon="mic"
+                  data-name="Live voice" data-desc="wear headphones"></button>
+          <button class="mode" data-ev="mute" id="b-drone" data-icon="speaker"
+                  data-name="Instrument" data-desc="in the mix"></button>
+        </div>
+      </div>
+    </div>
+
     <button id="punch" data-icon="punch">PUNCH (space)</button>
     <div class="hint">
       <kbd>space</kbd> wrist flick, <kbd>n</kbd> next scene,
-      <kbd>c</kbd> recalibrate flex, <kbd>f</kbd> freeze, <kbd>j</kbd> reverse,
-      <kbd>k</kbd> pitch-only, <kbd>v</kbd> record, <kbd>o</kbd> overdub,
-      <kbd>p</kbd> loop, <kbd>g</kbd> granular, <kbd>b</kbd> slices,
-      <kbd>m</kbd> instrument, <kbd>l</kbd> live voice,
-      <kbd>1</kbd>–<kbd>7</kbd> instruments.
-      Live voice: wear headphones, speak, roll = pitch, motion = echo.
+      <kbd>c</kbd> recalibrate flex, <kbd>1</kbd>–<kbd>7</kbd> instruments.
+      Each card's letter is its key. Live voice: wear headphones, speak,
+      roll = pitch, motion = echo.
     </div>
   </div>
 
@@ -980,9 +1042,22 @@ function icon(name, cls) {
     width="16" height="16" ${paint}>${body}</svg>`;
 }
 
-// Fill every data-icon button once the set is defined.
+// Fill every data-icon button once the set is defined. A mode card builds
+// its whole face from its data- attributes; everything else just gets the
+// icon put in front of the label it already had.
+const MODE_KEY = {record: "v", overdub: "o", loop: "p", granular: "g",
+                  slices: "b", freeze: "f", reverse: "j", pitchlock: "k",
+                  live: "l", mute: "m"};
 document.querySelectorAll("[data-icon]").forEach(b => {
-  b.innerHTML = icon(b.dataset.icon) + b.innerHTML;
+  if (b.classList.contains("mode")) {
+    b.innerHTML =
+      `<span class="mkey">${MODE_KEY[b.dataset.ev] || ""}</span>`
+      + `<span class="mdot"></span>`
+      + `<span class="mname">${icon(b.dataset.icon)}${b.dataset.name}</span>`
+      + `<span class="mdesc">${b.dataset.desc}</span>`;
+  } else {
+    b.innerHTML = icon(b.dataset.icon) + b.innerHTML;
+  }
 });
 
 // ---- macro knobs --------------------------------------------------------
@@ -1697,19 +1772,31 @@ function render(s) {
   $("s-motion").textContent = s.motion.toFixed(2);
   $("s-flex").textContent = s.flex == null ? "–" : s.flex.toFixed(2);
   $("s-flex2").textContent = s.flex2 == null ? "–" : s.flex2.toFixed(2);
-  $("b-loop").classList.toggle("on", !!s.loop);
-  $("b-granular").classList.toggle("on", !!s.granular);
-  $("b-slices").classList.toggle("on", !!s.slices);
-  $("b-freeze").classList.toggle("on", !!s.frozen);
-  $("b-reverse").classList.toggle("on", !!s.reverse);
-  $("b-pitchlock").classList.toggle("on", !!s.pitch_lock);
-  // Lit when the synth is actually in the mix. Loading a record mutes it,
-  // so this is the control that says "play over the track" or "don't".
-  $("b-drone").classList.toggle("on", !!s.drone);
-  $("b-drone").innerHTML = icon("speaker") +
-    (s.muted ? "instrument off (m)" : "instrument (m)");
-  $("b-live").classList.toggle("on", !!s.live);
-  document.querySelector("[data-ev=record]").classList.toggle("on", !!s.recording);
+  // One table rather than a line each: the cards all behave the same way,
+  // and the count in the header has to come from the same source or it
+  // drifts from the dots it is meant to summarise.
+  const MODE_STATE = {
+    "b-record": !!s.recording, "b-overdub": !!s.recording,
+    "b-loop": !!s.loop, "b-granular": !!s.granular, "b-slices": !!s.slices,
+    "b-freeze": !!s.frozen, "b-reverse": !!s.reverse,
+    "b-pitchlock": !!s.pitch_lock, "b-live": !!s.live,
+    // Lit when the synth is actually in the mix. Loading a record mutes it,
+    // so this is the control that says "play over the track" or "don't".
+    "b-drone": !!s.drone,
+  };
+  let active = 0;
+  for (const [id, on] of Object.entries(MODE_STATE)) {
+    const el = $(id);
+    if (!el) continue;
+    el.classList.toggle("on", on);
+    if (on) active++;
+  }
+  const count = $("modecount");
+  if (count) count.textContent = active + " active";
+  // The instrument card says which way round it is in its description,
+  // since its title should stay the same word wherever you look for it.
+  const drone = $("b-drone") && $("b-drone").querySelector(".mdesc");
+  if (drone) drone.textContent = s.muted ? "muted" : "in the mix";
   document.querySelectorAll("[data-ins]").forEach((b) =>
     b.classList.toggle("on", b.dataset.ins === s.instrument));
   if (s.scope) scopeData = s.scope;
