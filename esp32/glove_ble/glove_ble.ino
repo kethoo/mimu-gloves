@@ -74,6 +74,11 @@
 #define HOLD_MS     400   // press longer than this records; shorter = next scene
 // Longer than any real press, so a button that stays down is a fault.
 #define BTN_STUCK_MS 8000
+// More presses than this inside the window means the pin is producing them
+// itself. A player does not press a glove's one button six times in ten
+// seconds; a floating input does it constantly.
+#define BTN_FAULT_PRESSES   5
+#define BTN_FAULT_WINDOW_MS 10000
 #define LED_PIN     19
 #define I2S_SCK     33
 #define I2S_WS      25
@@ -111,6 +116,7 @@ float lax = 0, lay = 0, laz = 0;
 float flex = 0, flex2 = 0;  // smoothed raw ADC; the laptop calibrates these
 uint32_t scenePresses = 0;  // running count of short button presses
 bool btnStuck = false;      // button ignored until it releases (see buttonHeld)
+bool btnFaulty = false;     // button disabled for this session (see buttonHeld)
 
 // Microphone / recording state.
 I2SClass i2s;
@@ -225,7 +231,7 @@ int readFlex(int pin) {
 }
 
 bool buttonHeld() {
-  static bool stable = false, lastRaw = false;
+  static bool stable = false, lastRaw = false, lastStable = false;
   static uint32_t lastChange = 0, heldSince = 0;
   bool raw = digitalRead(BTN_PIN) == LOW;
   if (raw != lastRaw) { lastRaw = raw; lastChange = millis(); }
@@ -233,6 +239,27 @@ bool buttonHeld() {
     if (raw && !stable) heldSince = millis();
     stable = raw;
   }
+  // A healthy button is pressed deliberately, a few times a minute. One
+  // that produces presses on its own is a wiring fault, and it is far more
+  // damaging than it sounds: each phantom hold records two seconds of the
+  // room from the glove's own mic, and a take REPLACES the loop — so a song
+  // you just loaded is overwritten by whatever the speakers were playing.
+  // Measured on the faulty glove: four recordings in twenty-two seconds.
+  static uint32_t presses = 0, windowStart = 0;
+  if (stable && !lastStable) {
+    uint32_t now = millis();
+    if (now - windowStart > BTN_FAULT_WINDOW_MS) { windowStart = now; presses = 0; }
+    if (++presses > BTN_FAULT_PRESSES && !btnFaulty) {
+      btnFaulty = true;
+      Serial.printf("!! button produced %u presses in %lu s on its own - "
+                    "disabling it for this session (check its wiring)\n",
+                    (unsigned)presses,
+                    (unsigned long)(BTN_FAULT_WINDOW_MS / 1000));
+    }
+  }
+  lastStable = stable;
+  if (btnFaulty) return false;
+
   if (!stable) { btnStuck = false; return false; }
 
   // A press that never ends is a wiring fault, not a very long press. It
@@ -299,6 +326,17 @@ void setup() {
 
   pinMode(BTN_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
+  // Nobody powers the glove up with the button held, so a button that is
+  // already down at boot is a short. Waiting out BTN_STUCK_MS still let it
+  // record a stray take first, and a take REPLACES whatever is in the loop
+  // — so a song you had just loaded was overwritten by two seconds of the
+  // room, picked up from the speakers, which then looped.
+  delay(20);
+  if (digitalRead(BTN_PIN) == LOW) {
+    btnStuck = true;
+    Serial.println("!! button is already pressed at boot - treating it as "
+                   "stuck and ignoring it (check its wiring)");
+  }
 
   // The audio buffer lives in PSRAM: this is a WROVER module, and internal
   // RAM has no room for it beside the BLE stack. Falls back to a shorter
