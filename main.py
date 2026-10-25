@@ -659,6 +659,14 @@ def main() -> None:
             take = source.take_audio()
             if take is None and voice_source is not None:
                 take = voice_source.take_audio()
+            if take is not None and "--no-glove-mic" in sys.argv:
+                # A take REPLACES the loop, so a glove whose button misfires
+                # overwrites a loaded song with a couple of seconds of the
+                # room. Dropped here rather than in the firmware because a
+                # fault that fires every half minute never trips a counter
+                # watching for a burst, and this is certain.
+                print("\n[ignored a glove recording — --no-glove-mic]")
+                take = None
             if take is not None:
                 synth.set_loop(*take)
                 song_state["status"] = ""   # a glove take replaces the song

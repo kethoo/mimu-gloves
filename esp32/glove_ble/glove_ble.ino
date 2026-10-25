@@ -77,8 +77,13 @@
 // More presses than this inside the window means the pin is producing them
 // itself. A player does not press a glove's one button six times in ten
 // seconds; a floating input does it constantly.
-#define BTN_FAULT_PRESSES   5
-#define BTN_FAULT_WINDOW_MS 10000
+// Counted over a minute, not ten seconds. A pin that misfires every
+// twenty or thirty seconds never produces a burst, so a short window
+// never sees it — but each misfire still records two seconds of the room
+// and replaces whatever was loaded. Three deliberate presses in a minute
+// is already more than this button is for.
+#define BTN_FAULT_PRESSES   3
+#define BTN_FAULT_WINDOW_MS 60000
 #define LED_PIN     19
 #define I2S_SCK     33
 #define I2S_WS      25

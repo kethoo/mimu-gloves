@@ -352,6 +352,7 @@ them.
 | --- | --- |
 | `flex1 -` in the status line | That channel has not swung 80 ADC counts yet. Bend the finger fully a few times |
 | Postures do nothing | Both flex channels must be calibrated — if either shows `-`, no posture can fire |
+| A loaded song is replaced by a few seconds of room noise | The glove's button is misfiring: a hold records from its mic, and a take replaces the loop. The firmware disables a button that fires on its own, but a fault that misfires every half minute never trips that. Run with `--no-glove-mic` |
 | Stuck on FROZEN | Freeze is set by a fist and cleared by an open hand, so a dead flex channel can leave it on with no gesture to escape. Press `f`, or the ❄ button |
 | Orientation frozen, warning printed | The BNO08x has stalled. The link is fine; check its 3V3 and SDA/SCL |
 | Sound from the wrong device | Audio binds when the stream opens. Restart, or pass `--audio-out` |
