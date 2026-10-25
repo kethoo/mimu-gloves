@@ -72,6 +72,8 @@
 // Record button, status LED and the INMP441 microphone.
 #define BTN_PIN     18
 #define HOLD_MS     400   // press longer than this records; shorter = next scene
+// Longer than any real press, so a button that stays down is a fault.
+#define BTN_STUCK_MS 8000
 #define LED_PIN     19
 #define I2S_SCK     33
 #define I2S_WS      25
@@ -108,6 +110,7 @@ float roll = 0, pitch = 0, yaw = 0;
 float lax = 0, lay = 0, laz = 0;
 float flex = 0, flex2 = 0;  // smoothed raw ADC; the laptop calibrates these
 uint32_t scenePresses = 0;  // running count of short button presses
+bool btnStuck = false;      // button ignored until it releases (see buttonHeld)
 
 // Microphone / recording state.
 I2SClass i2s;
@@ -223,11 +226,27 @@ int readFlex(int pin) {
 
 bool buttonHeld() {
   static bool stable = false, lastRaw = false;
-  static uint32_t lastChange = 0;
+  static uint32_t lastChange = 0, heldSince = 0;
   bool raw = digitalRead(BTN_PIN) == LOW;
   if (raw != lastRaw) { lastRaw = raw; lastChange = millis(); }
-  if (millis() - lastChange > 30) stable = raw;
-  return stable;
+  if (millis() - lastChange > 30) {
+    if (raw && !stable) heldSince = millis();
+    stable = raw;
+  }
+  if (!stable) { btnStuck = false; return false; }
+
+  // A press that never ends is a wiring fault, not a very long press. It
+  // matters because the buffer-full path waits for the release and would
+  // spin there for good, and recording returns early from the loop — so a
+  // shorted button stops the glove sending orientation at all. Measured on
+  // a glove whose GPIO18 was shorted: one heartbeat in thirty seconds, the
+  // panel showing it connected and stalled with the hand frozen at zero.
+  if (!btnStuck && millis() - heldSince > BTN_STUCK_MS) {
+    btnStuck = true;
+    Serial.println("!! button has read as pressed for 8 s - treating it as "
+                   "stuck and ignoring it until it releases (check its wiring)");
+  }
+  return !btnStuck;
 }
 
 // Ship the take to the laptop: a 12-byte header, then raw little-endian
