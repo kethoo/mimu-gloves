@@ -202,13 +202,24 @@
   /* A dot rather than only a border, so "on" survives being read quickly. */
   .mode .mdot { position: absolute; top: 14px; right: 13px; width: 8px;
                 height: 8px; border-radius: 50%; background: var(--gtrack); }
-  .mode.on .mdot { background: var(--accent); }
+  .mode.on .mdot { background: var(--group); }
   .mode .mname { display: block; font-size: 17px; font-weight: 600;
                  margin: 14px 0 3px; }
   .mode .mname .iicon { margin-right: 7px; }
   .mode .mdesc { display: block; font-size: 14px; color: var(--dim);
                  line-height: 1.35; }
-  .mode.on { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+  /* Each column lights in its own hue, so a glance at the panel says which
+     kind of thing is running without reading the four names. Recording is
+     the pink one because that is what red means on every recorder there has
+     ever been; texture keeps the app's teal; the hand's own controls are
+     amber. One variable per group — every rule below follows it. */
+  .modegroup { --group: var(--accent); }
+  .modegroup.g-capture { --group: var(--hot); }
+  .modegroup.g-voice { --group: var(--warn); }
+  /* Two classes, so this beats the plain button.on further down without
+     needing to sit after it. */
+  .mode.on { border-color: var(--group); color: var(--group);
+             background: color-mix(in srgb, var(--group) 12%, var(--panel)); }
 
   /* Key hints as pills rather than a run-on sentence: they are a legend,
      and a legend is scanned rather than read. */
@@ -643,7 +654,7 @@
     </div>
 
     <div class="modegrid">
-      <div class="modegroup">
+      <div class="modegroup g-capture">
         <div class="modehead"><b>Capture</b><span>Record what you play</span></div>
         <div class="modecards">
           <button class="mode" data-ev="record" id="b-record" data-icon="record"
@@ -669,7 +680,7 @@
         </div>
       </div>
 
-      <div class="modegroup">
+      <div class="modegroup g-voice">
         <div class="modehead"><b>Voice</b><span>What the hand controls</span></div>
         <div class="modecards">
           <button class="mode" data-ev="pitchlock" id="b-pitchlock" data-icon="pitch"
