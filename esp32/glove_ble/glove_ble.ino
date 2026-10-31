@@ -89,12 +89,11 @@
 // from 5 V wants about 3.5 V before it reads a bit as high. That is the
 // wiring that mostly works and occasionally shows the wrong colour.
 // Driven by the core's own neopixelWrite(), so there is no library to add.
-#define LED_PIN     16
-// On a WROVER the PSRAM chip owns GPIO16 and GPIO17, and this is a WROVER:
-// with PSRAM enabled the pin is already spoken for, so the LED stays dark or
-// flickers as the cache is touched. Either move the DIN wire — GPIO19 is
-// free now that the plain LED is gone — or build without PSRAM=enabled and
-// accept the shorter recording buffer that forces.
+// GPIO23 rather than 16: on a WROVER the PSRAM chip owns 16 and 17, so the
+// LED there works only in a build without PSRAM, which costs the 8 s
+// recording buffer. 23 is not a strapping pin, not flash and not PSRAM, so
+// it is quiet at boot and keeps both.
+#define LED_PIN     23
 #if defined(BOARD_HAS_PSRAM) && (LED_PIN == 16 || LED_PIN == 17)
   #error "LED_PIN 16/17 is the PSRAM bus on a WROVER - see the note above it"
 #endif

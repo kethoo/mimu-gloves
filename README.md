@@ -574,17 +574,16 @@ the rail below ~3.0V.
 | INMP441 mic | SCK→33, WS→25, SD→32, L/R→GND |
 | Flex sensors | GPIO34, GPIO35 (each with a 15k to GND) |
 | Button | GPIO18 → GND (internal pull-up) |
-| Status LED | WS2812B: DIN→16, GND→GND, VDD→**3V3** (not 5V) |
+| Status LED | WS2812B: DIN→23, GND→GND, VDD→**3V3** (not 5V) |
 
 Avoid GPIO0/2/12/15 (boot strapping), GPIO6–11 (flash), and **GPIO16/17** —
 measured on this board, GPIO16 reads LOW with the pull-up enabled and nothing
 attached, because it belongs to the PSRAM on WROVER modules.
 
-That applies to the LED pin above: GPIO16 drives the WS2812B only in a build
-**without** `PSRAM=enabled`, which shrinks the recording buffer from 8 s to
-whatever internal RAM spares (~2–3 s). To keep the long buffer, move the DIN
-wire to GPIO19 and set `LED_PIN` to match. The sketch refuses to compile if
-PSRAM and the LED are asked for the same pin.
+That is why the LED's DIN sits on GPIO23 and not 16: on 16 it would work
+only in a build **without** `PSRAM=enabled`, which drops the recording
+buffer from 8 s to whatever internal RAM spares. The sketch refuses to
+compile if `LED_PIN` and PSRAM are ever asked for the same pin.
 
 `UploadSpeed=115200` is required — the USB adapter fails at the default
 921600, and omitting it is a silent way to waste ten minutes. Add
