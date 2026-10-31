@@ -111,15 +111,10 @@
 // layers, so the fabric spreads it into a patch of light rather than a dot.
 // This one is driven by the laptop over LED_UUID and says what the hand is
 // doing musically, where the board LED says whether the hardware is well.
-// Different pin per hand, because the two gloves are not wired the same:
-// 19 was free on the instrument board once the old status LED moved off it,
-// and the voice board had it taken, so that one uses 27. Both are plain
-// GPIOs — no strapping, no flash, no PSRAM, nothing driven at boot.
-#ifdef HAND_VOICE
-  #define HAND_LED_PIN 27
-#else
-  #define HAND_LED_PIN 19
-#endif
+// The same pin on both hands, so the two gloves are wired identically and
+// there is nothing to get the wrong way round. 27 is a plain GPIO: no
+// strapping, no flash, no PSRAM, nothing driven at boot.
+#define HAND_LED_PIN 27
 // The same trap as the status LED, plus one of its own: GPIO12 sets the
 // flash voltage at boot, and held the wrong way the board does not come up
 // at all — a far worse afternoon than a dark LED.
