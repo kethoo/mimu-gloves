@@ -35,6 +35,8 @@ from sensors import GloveSource, SensorFrame
 SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 AUDIO_UUID = "6e400004-b5a3-f393-e0a9-e50e24dcca9e"
+# The only one we write rather than read: the glove's own LED.
+LED_UUID = "6e400005-b5a3-f393-e0a9-e50e24dcca9e"
 DEVICE_NAME = "MIMU-GLOVE"
 
 BASELINE_PACKETS = 80    # ~0.8 s of "hold still" used as the zero pose
@@ -284,6 +286,13 @@ class BleGloveSource(GloveSource):
         self._last_raw: tuple[float, float, float] | None = None
         self._frozen_since = 0.0
         self._warned_frozen = False
+        # What the glove's own LED should be showing. Set from the control
+        # loop, written by the BLE loop — the two run on different threads,
+        # and a 6-byte assignment is atomic enough that no lock is needed.
+        self._led: bytes | None = None
+        self._led_sent: bytes | None = None
+        self._led_at = 0.0
+        self._no_led = False   # older firmware: characteristic not there
         self._testpattern_hits = 0
         self._warned_testpattern = False
         self._flex = _FlexChannel("flex sensor 1")
@@ -381,8 +390,10 @@ class BleGloveSource(GloveSource):
                                 "the glove does not. Reflash to enable it.]"
                             )
                     self.connected = True
+                    self._led_sent = None   # a new link knows nothing yet
                     while self._running and client.is_connected:
-                        await asyncio.sleep(0.2)
+                        await self._push_led(client)
+                        await asyncio.sleep(0.05)
                     self.connected = False
             except Exception as exc:  # dropped mid-transfer, adapter busy, ...
                 self.connected = False
@@ -391,6 +402,49 @@ class BleGloveSource(GloveSource):
                 print("\n[glove disconnected — reconnecting...]")
                 await asyncio.sleep(1.0)
         self.quit_requested = True
+
+    def set_led(self, hue: int, value: int, pattern: int,
+                phase: float = 0.0, period_ms: int = 0) -> None:
+        """Tell the glove's own LED what the music is doing.
+
+        Called from the control loop. The glove animates the pattern itself
+        from `phase` and `period_ms`, so this does not have to keep up with
+        the beat — it only has to say where the beat was and how long a
+        cycle lasts.
+        """
+        self._led = bytes((
+            int(hue) & 0xFF,
+            max(0, min(255, int(value))),
+            int(pattern) & 0xFF,
+            int(phase * 256) & 0xFF,
+            period_ms & 0xFF,
+            (period_ms >> 8) & 0xFF,
+        ))
+
+    async def _push_led(self, client) -> None:
+        """Send the LED state when it changes, and once a second regardless.
+
+        The resend is what keeps the beat honest: the glove runs the
+        animation off its own clock between packets, so without an
+        occasional correction it would drift away from the loop it is
+        supposed to be marking.
+        """
+        if self._no_led or self._led is None:
+            return
+        now = time.monotonic()
+        if self._led == self._led_sent and now - self._led_at < 1.0:
+            return
+        try:
+            await client.write_gatt_char(LED_UUID, self._led, response=False)
+            self._led_sent, self._led_at = self._led, now
+        except Exception:
+            # Firmware without the characteristic, or a link going down.
+            # Either way: stop trying rather than raise once per frame, since
+            # an exception here would tear down a connection that is
+            # otherwise streaming orientation perfectly well.
+            self._no_led = True
+            print(f"\n[{self.label}: no LED characteristic — older firmware. "
+                  "Everything else works; reflash to light the glove.]")
 
     def _on_audio(self, _handle, data: bytearray) -> None:
         """Reassemble a take from the glove: a 12-byte header, then raw

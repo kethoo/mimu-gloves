@@ -36,6 +36,7 @@ import pathlib
 import sys
 import time
 import webbrowser
+import zlib
 
 import instruments as instruments_mod
 import mapping
@@ -68,6 +69,74 @@ def _reload_customs(synth) -> None:
     synth.reload_customs()
     if keep is not None:
         synth.customs[DESIGN_SLOT] = keep
+
+
+# ---- the LED sewn into each glove ---------------------------------------
+# Pattern numbers, matching the enum in esp32/glove_ble/glove_ble.ino.
+LED_OFF, LED_STEADY, LED_BREATHE, LED_PULSE = 0, 1, 2, 3
+LED_SLICES, LED_FROZEN, LED_REVERSE, LED_RECORD, LED_ACCENT = 4, 5, 6, 7, 8
+
+# A hue per instrument, so a colour means the same thing in every session.
+# The built-ins are spaced round the wheel by hand; anything you designed is
+# hashed, which is arbitrary but at least stable.
+INSTRUMENT_HUE = {"saw": 0, "organ": 30, "strings": 60, "bell": 95,
+                  "flute": 130, "pluck": 165, "guitar": 200}
+# The loop hand says which mode it is in. Far enough apart to tell by eye
+# under fabric, which blurs them.
+MODE_HUE = {"normal": 145, "granular": 190, "slices": 20,
+            "freeze": 125, "reverse": 225}
+
+
+def _instrument_hue(name: str) -> int:
+    if name in INSTRUMENT_HUE:
+        return INSTRUMENT_HUE[name]
+    # crc32 rather than hash(): hash is salted per process, so a designed
+    # instrument would come up a different colour on every run.
+    return zlib.crc32(name.encode()) % 256
+
+
+def _push_hand_leds(synth, live_src, loop_src) -> None:
+    """Describe the music to the LED sewn into each glove.
+
+    Only the description travels: colour, how strongly it is playing, and
+    where the loop is. The gloves animate the pattern off their own clocks,
+    so this does not have to keep time over BLE.
+    """
+    secs = synth.loop_seconds
+    period = int(secs * 1000)
+    phase = (synth.loop_position / secs) if secs else 0.0
+
+    if live_src is not None and hasattr(live_src, "set_led"):
+        hue = _instrument_hue(synth.instrument)
+        if synth.instrument_off:
+            # Silenced to let a loaded song through. This is the state that
+            # was invisible before and kept reading as a fault.
+            live_src.set_led(hue, 150, LED_BREATHE, phase, period)
+        else:
+            # Bright while the gate is open, dim but lit while it is not:
+            # the hand is still "holding" that instrument either way.
+            val = 255 if synth.drone_on else 60
+            pat = LED_ACCENT if period else LED_STEADY
+            live_src.set_led(hue, val, pat, phase, period)
+
+    if loop_src is not None and hasattr(loop_src, "set_led"):
+        if synth.is_recording:
+            loop_src.set_led(0, 255, LED_RECORD, phase, period)
+        elif synth.freeze_on:
+            loop_src.set_led(MODE_HUE["freeze"], 230, LED_FROZEN, phase, period)
+        elif not secs:
+            loop_src.set_led(MODE_HUE["normal"], 110, LED_BREATHE, 0.0, 0)
+        else:
+            mode = ("granular" if synth.granular_on
+                    else "slices" if synth.slices_on else "normal")
+            if synth.reverse:
+                pat = LED_REVERSE
+            elif synth.slices_on:
+                pat = LED_SLICES   # one beat per chop, so you see the grid
+            else:
+                pat = LED_PULSE
+            hue = MODE_HUE["reverse"] if synth.reverse else MODE_HUE[mode]
+            loop_src.set_led(hue, 255, pat, phase, period)
 
 
 def _handle_design(msg: dict, synth) -> None:
@@ -718,6 +787,7 @@ def main() -> None:
                 # along on top.
                 synth.mute_instrument(True)
                 seq = None
+            _push_hand_leds(synth, glove_src, voice_source)
             publish = getattr(source, "publish", None)
             if publish is not None:
                 live_p = hand.posture

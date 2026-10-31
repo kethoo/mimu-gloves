@@ -56,6 +56,11 @@
 #define SERVICE_UUID "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 #define CHAR_UUID    "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 #define AUDIO_UUID   "6e400004-b5a3-f393-e0a9-e50e24dcca9e"
+// The first thing the laptop can SEND to the glove rather than read from it.
+// Everything else here is notify-only, so the glove had no way of knowing
+// which instrument or loop mode it was part of — which is most of what the
+// LED on the hand wants to show.
+#define LED_UUID     "6e400005-b5a3-f393-e0a9-e50e24dcca9e"
 
 #define BNO08X_I2C_ADDR 0x4B
 #define BNO_RST 4
@@ -101,6 +106,15 @@
 // are the only two levels the patterns use.
 #define LED_LOW      6
 #define LED_HIGH    60
+
+// The second WS2812B: sewn to the back of the hand, between the glove's two
+// layers, so the fabric spreads it into a patch of light rather than a dot.
+// This one is driven by the laptop over LED_UUID and says what the hand is
+// doing musically, where the board LED says whether the hardware is well.
+#define HAND_LED_PIN 19
+// Sewn-in and diffused by two layers of fabric, so it needs less than the
+// bare one on the board to read at the same strength.
+#define HAND_LED_MAX 48
 #define I2S_SCK     33
 #define I2S_WS      25
 #define I2S_SD      32
@@ -146,6 +160,33 @@ size_t maxSamples = 0;   // however many the allocation gave us
 int16_t *audioBuf = nullptr;     // allocated in PSRAM at boot
 size_t audioLen = 0;
 int ledMode = 0;                 // 0 idle, 1 recording, 2 sending, 3 error
+
+// The glove LED's state, as the laptop last described it. Declared here
+// rather than beside its animation code because the BLE callback below
+// writes it. See updateHandLed() for what the bytes mean.
+enum : uint8_t {
+  PAT_OFF = 0, PAT_STEADY, PAT_BREATHE, PAT_PULSE,
+  PAT_SLICES, PAT_FROZEN, PAT_REVERSE, PAT_RECORD,
+  // Like PULSE but barely dipping: the melody hand shares the loop's clock
+  // without turning into a blinker and competing with what it is playing.
+  PAT_ACCENT,
+};
+// hue, value, pattern, phase, period low, period high. Written by the BLE
+// task and read by the loop; a torn read would cost one frame of one LED, so
+// it is not worth a lock.
+volatile uint8_t handPkt[6] = {0, 0, PAT_OFF, 0, 0, 0};
+volatile uint32_t handPktAt = 0;
+
+// Six bytes from the laptop: hue, value, pattern, phase, period (uint16 LE).
+// Anything shorter is ignored rather than half-applied.
+class LedCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) override {
+    if (c->getLength() < 6) return;
+    const uint8_t *d = c->getData();
+    for (int i = 0; i < 6; i++) handPkt[i] = d[i];
+    handPktAt = millis();
+  }
+};
 
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *) override { deviceConnected = true; }
@@ -236,13 +277,19 @@ bool initSensor() {
 
 // Written only when the colour actually changes. Each write is an RMT
 // transaction that holds the pin for ~80 us, and there is no reason to run
-// one fifty times a second to say what the LED is already saying.
+// one fifty times a second to say what the LED is already saying. The cache
+// is per LED, since there are two of them on different pins now.
+void writePixel(uint8_t pin, uint8_t idx, uint8_t r, uint8_t g, uint8_t b) {
+  static uint8_t last[2][3] = {{0, 0, 0}, {0, 0, 0}};
+  static bool written[2] = {false, false};
+  if (written[idx] && r == last[idx][0] && g == last[idx][1] && b == last[idx][2])
+    return;
+  last[idx][0] = r; last[idx][1] = g; last[idx][2] = b; written[idx] = true;
+  neopixelWrite(pin, r, g, b);
+}
+
 void setLed(uint8_t r, uint8_t g, uint8_t b) {
-  static uint8_t lr = 0, lg = 0, lb = 0;
-  static bool written = false;
-  if (written && r == lr && g == lg && b == lb) return;
-  lr = r; lg = g; lb = b; written = true;
-  neopixelWrite(LED_PIN, r, g, b);
+  writePixel(LED_PIN, 0, r, g, b);
 }
 
 // Status LED. Non-blocking so the pattern survives audio work. One colour
@@ -259,6 +306,95 @@ void updateLed() {
   else if (ledMode == 3) setLed((t / 120) % 2 ? LED_HIGH : 0, 0, 0);
   else if (deviceConnected) setLed(0, LED_LOW, 0);
   else setLed(0, 0, (t / 900) % 2 ? LED_LOW : 0);
+}
+
+// ---- the LED sewn into the glove ----------------------------------------
+// This one belongs to the laptop. It knows the instrument, the loop mode and
+// where the playhead is; the glove knows none of that, which is exactly why
+// the write characteristic had to exist. Six bytes arrive and are animated
+// here rather than streamed frame by frame, so the pulse stays smooth
+// between updates and a dropped packet costs nothing.
+// Mirrors N_SLICES in synth.py: the take is chopped into four, so the hand
+// beats four times a cycle and you can see where the chops land.
+#define HAND_SLICES 4
+
+// Hue at full brightness; the pattern scales it afterwards. An integer
+// rainbow rather than real HSV — this is a glowing patch of fabric, not a
+// colour-managed display.
+static void hueToRgb(uint8_t h, uint8_t &r, uint8_t &g, uint8_t &b) {
+  uint8_t sector = h / 43, f = (uint8_t)((h % 43) * 6);
+  switch (sector) {
+    case 0:  r = 255;     g = f;       b = 0;       break;
+    case 1:  r = 255 - f; g = 255;     b = 0;       break;
+    case 2:  r = 0;       g = 255;     b = f;       break;
+    case 3:  r = 0;       g = 255 - f; b = 255;     break;
+    case 4:  r = f;       g = 0;       b = 255;     break;
+    default: r = 255;     g = 0;       b = 255 - f; break;
+  }
+}
+
+// A hit rather than a blink: full at the top of the cycle and gone a quarter
+// of the way in, over a floor so the hand never goes black mid-loop.
+static float accent(float p) {
+  float a = 1.0f - p * 4.0f;
+  return a > 0.0f ? a : 0.0f;
+}
+
+void updateHandLed() {
+  uint8_t pat = handPkt[2];
+  uint32_t now = millis();
+
+  // Where the loop is *now*, carried on from the last packet. Interpolating
+  // locally is what keeps the beat smooth: the laptop only has to resync
+  // occasionally instead of sending every frame of the animation.
+  float p = 0.0f;
+  uint16_t period = (uint16_t)handPkt[4] | ((uint16_t)handPkt[5] << 8);
+  if (period > 0) {
+    float turns = handPkt[3] / 256.0f + (float)(now - handPktAt) / period;
+    p = turns - floorf(turns);
+  }
+
+  float level;
+  switch (pat) {
+    case PAT_OFF:
+      writePixel(HAND_LED_PIN, 1, 0, 0, 0);
+      return;
+    case PAT_RECORD:   // the one state that overrides its own colour
+      writePixel(HAND_LED_PIN, 1, HAND_LED_MAX, 0, 0);
+      return;
+    case PAT_BREATHE:
+      level = 0.15f + 0.35f * (0.5f + 0.5f * sinf(now / 1200.0f));
+      break;
+    case PAT_PULSE:
+      level = 0.35f + 0.65f * accent(p);
+      break;
+    case PAT_SLICES: {
+      float q = p * HAND_SLICES;
+      level = 0.35f + 0.65f * accent(q - floorf(q));
+      break;
+    }
+    case PAT_REVERSE:  // the hit decays into the beat instead of off it
+      level = 0.35f + 0.65f * accent(1.0f - p);
+      break;
+    case PAT_ACCENT:
+      level = 0.82f + 0.18f * accent(p);
+      break;
+    default:           // STEADY and FROZEN both just hold
+      level = 1.0f;
+      break;
+  }
+
+  uint8_t r, g, b;
+  hueToRgb(handPkt[0], r, g, b);
+  // The base colour eases over ~100 ms, so changing instrument reads as a
+  // change rather than a glitch. Freeze snaps, because the audio snaps.
+  static float cr = 0, cg = 0, cb = 0;
+  float k = (pat == PAT_FROZEN) ? 1.0f : 0.25f;
+  cr += (r - cr) * k; cg += (g - cg) * k; cb += (b - cb) * k;
+
+  float scale = level * (handPkt[1] / 255.0f) * (HAND_LED_MAX / 255.0f);
+  writePixel(HAND_LED_PIN, 1, (uint8_t)(cr * scale),
+             (uint8_t)(cg * scale), (uint8_t)(cb * scale));
 }
 
 // Oversampled flex read: see FLEX_OVERSAMPLE above for why this matters.
@@ -367,6 +503,8 @@ void setup() {
   // at power-up latches whatever noise it saw and sits there lit.
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+  pinMode(HAND_LED_PIN, OUTPUT);
+  digitalWrite(HAND_LED_PIN, LOW);
   // Nobody powers the glove up with the button held, so a button that is
   // already down at boot is a short. Waiting out BTN_STUCK_MS still let it
   // record a stray take first, and a take REPLACES whatever is in the loop
@@ -423,6 +561,14 @@ void setup() {
   sensorChar->addDescriptor(new BLE2902());
   audioChar = service->createCharacteristic(
       AUDIO_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+
+  // Write-without-response as well as write: the laptop sends this several
+  // times a second and has no use for an acknowledgement, and waiting for
+  // one would put it in the way of the audio transfer.
+  BLECharacteristic *ledChar = service->createCharacteristic(
+      LED_UUID, BLECharacteristic::PROPERTY_WRITE |
+                BLECharacteristic::PROPERTY_WRITE_NR);
+  ledChar->setCallbacks(new LedCallbacks());
   audioChar->addDescriptor(new BLE2902());
   service->start();
   server->getAdvertising()->start();
@@ -514,6 +660,7 @@ void loop() {
   uint32_t now = millis();
 
   updateLed();
+  updateHandLed();
 
   // One button, two jobs: a short press asks the laptop for the next scene,
   // holding it records. Recording only begins once the press passes HOLD_MS,
