@@ -575,6 +575,7 @@ the rail below ~3.0V.
 | Flex sensors | GPIO34, GPIO35 (each with a 15k to GND) |
 | Button | GPIO18 → GND (internal pull-up) |
 | Status LED | WS2812B: DIN→23, GND→GND, VDD→**3V3** (not 5V) |
+| Glove LED | WS2812B on the back of the hand: DIN→19 left / **27 right**, VDD→3V3 |
 
 Avoid GPIO0/2/12/15 (boot strapping), GPIO6–11 (flash), and **GPIO16/17** —
 measured on this board, GPIO16 reads LOW with the pull-up enabled and nothing
