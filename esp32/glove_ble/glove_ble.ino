@@ -84,7 +84,24 @@
 // is already more than this button is for.
 #define BTN_FAULT_PRESSES   3
 #define BTN_FAULT_WINDOW_MS 60000
-#define LED_PIN     19
+// Status LED: one WS2812B (NeoPixel). GND to ground, DIN here, and VDD to
+// 3V3 rather than 5V — the ESP32 drives DIN at 3.3 V, while a WS2812B run
+// from 5 V wants about 3.5 V before it reads a bit as high. That is the
+// wiring that mostly works and occasionally shows the wrong colour.
+// Driven by the core's own neopixelWrite(), so there is no library to add.
+#define LED_PIN     16
+// On a WROVER the PSRAM chip owns GPIO16 and GPIO17, and this is a WROVER:
+// with PSRAM enabled the pin is already spoken for, so the LED stays dark or
+// flickers as the cache is touched. Either move the DIN wire — GPIO19 is
+// free now that the plain LED is gone — or build without PSRAM=enabled and
+// accept the shorter recording buffer that forces.
+#if defined(BOARD_HAS_PSRAM) && (LED_PIN == 16 || LED_PIN == 17)
+  #error "LED_PIN 16/17 is the PSRAM bus on a WROVER - see the note above it"
+#endif
+// A WS2812B at full scale is blinding at arm's length and draws 60 mA. These
+// are the only two levels the patterns use.
+#define LED_LOW      6
+#define LED_HIGH    60
 #define I2S_SCK     33
 #define I2S_WS      25
 #define I2S_SD      32
@@ -218,14 +235,31 @@ bool initSensor() {
   return false;
 }
 
-// Status LED. Non-blocking so the pattern survives audio work.
+// Written only when the colour actually changes. Each write is an RMT
+// transaction that holds the pin for ~80 us, and there is no reason to run
+// one fifty times a second to say what the LED is already saying.
+void setLed(uint8_t r, uint8_t g, uint8_t b) {
+  static uint8_t lr = 0, lg = 0, lb = 0;
+  static bool written = false;
+  if (written && r == lr && g == lg && b == lb) return;
+  lr = r; lg = g; lb = b; written = true;
+  neopixelWrite(LED_PIN, r, g, b);
+}
+
+// Status LED. Non-blocking so the pattern survives audio work. One colour
+// per state, so the glove can be read on its own without the laptop:
+//   solid red        recording
+//   blue blink       sending the take over BLE
+//   fast red blink   sensor stalled — the watchdog below is trying to recover
+//   dim green        idle, laptop connected
+//   dim blue pulse   idle, advertising and waiting to be connected to
 void updateLed() {
   uint32_t t = millis();
-  bool on = false;
-  if (ledMode == 1) on = true;                 // recording: solid
-  else if (ledMode == 2) on = (t / 400) % 2;   // sending: slow blink
-  else if (ledMode == 3) on = (t / 120) % 2;   // error: fast blink
-  digitalWrite(LED_PIN, on);
+  if (ledMode == 1) setLed(LED_HIGH, 0, 0);
+  else if (ledMode == 2) setLed(0, 0, (t / 400) % 2 ? LED_HIGH : 0);
+  else if (ledMode == 3) setLed((t / 120) % 2 ? LED_HIGH : 0, 0, 0);
+  else if (deviceConnected) setLed(0, LED_LOW, 0);
+  else setLed(0, 0, (t / 900) % 2 ? LED_LOW : 0);
 }
 
 // Oversampled flex read: see FLEX_OVERSAMPLE above for why this matters.
@@ -330,7 +364,10 @@ void setup() {
   delay(100);
 
   pinMode(BTN_PIN, INPUT_PULLUP);
+  // Held low until the first colour is written: a WS2812B whose DIN floats
+  // at power-up latches whatever noise it saw and sits there lit.
   pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
   // Nobody powers the glove up with the button held, so a button that is
   // already down at boot is a short. Waiting out BTN_STUCK_MS still let it
   // record a stray take first, and a take REPLACES whatever is in the loop
@@ -442,6 +479,12 @@ void readSensor() {
   // few times, then escalate to a full hardware reset + re-init.
   uint32_t now = millis();
   uint32_t since = now - lastReportMs;
+  // The error colour was defined and never used, which is a waste of the one
+  // thing the glove can say by itself. The stall now shows on the hand as it
+  // happens, instead of only in the laptop's log: red the moment reports go
+  // missing, back to idle the moment they come back. Recording and sending
+  // outrank it — those say something the wearer is waiting on.
+  if (ledMode != 1 && ledMode != 2) ledMode = (since > 1000) ? 3 : 0;
   if (since > 1000 && now > nextRetryMs) {
     nextRetryMs = now + 1000;
     if (reEnableCount < 2) {
