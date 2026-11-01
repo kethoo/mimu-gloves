@@ -6,6 +6,12 @@ gestures to a real-time synthesizer. A keyboard simulator and a browser
 frontend stand in for the glove, so every feature can be built and tested
 with no hardware attached.
 
+![What each hand does](docs/glove-gestures.png)
+
+The two hands are deliberately asymmetric. Every parameter of the instrument
+exists once and belongs to exactly one hand, so the hands cannot be swapped —
+scrubbing a recording is meaningless on the hand that is playing live.
+
 ## Quick start (no hardware needed)
 
 ```bash
@@ -620,6 +626,8 @@ no pins with I2C. If adding it breaks the IMU, the cause is mechanical
 the rail below ~3.0V.
 
 ## Hardware notes (BNO08x)
+
+![What sits on the glove and on which pin](docs/glove-hardware.png)
 
 | Part | Pins |
 | --- | --- |
