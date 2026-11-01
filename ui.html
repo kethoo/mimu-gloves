@@ -1020,6 +1020,11 @@ document.addEventListener("keydown", (e) => {
   const t = e.target;
   if (t && (t.tagName === "INPUT" && t.type === "text" || t.tagName === "TEXTAREA")) return;
   const k = e.key.toLowerCase();
+  // c, v, b, n and m are mode shortcuts here and notes on the designer's
+  // audition keyboard. Both listeners are on the document, so one press used
+  // to fire both: the instrument muted itself and then played a note on its
+  // own, over and over. While the Create tab is open those letters are notes.
+  if (designerOpen() && AUD_KEYS[k]) return;
   if (KEYS[k]) { sendEvent(KEYS[k]); e.preventDefault(); }
   else if (k >= "1" && k <= "7") sendEvent("instrument:" + INS[+k - 1]);
   else if (k === "r") resetHands();
@@ -1457,6 +1462,7 @@ function noteOff(){ sendDesign("noteoff", {}); }
     host.appendChild(b);
   });
   document.addEventListener("keydown", e => {
+    if (!designerOpen()) return;   // these letters belong to the modes then
     const t = e.target;
     if (t && t.tagName === "INPUT" && t.type === "text") return;
     if (e.repeat) return;
@@ -1464,6 +1470,7 @@ function noteOff(){ sendDesign("noteoff", {}); }
     if (n) { noteOn(n); e.preventDefault(); }
   });
   document.addEventListener("keyup", e => {
+    if (!designerOpen()) return;
     if (AUD_KEYS[e.key.toLowerCase()]) noteOff();
   });
 })();
@@ -1529,6 +1536,13 @@ const ENGINE_BLURB = {
 // ---- tabs ---------------------------------------------------------------
 // One pane at a time. Everything was on screen at once, which made the page
 // a wall rather than something you move through.
+// Is the designer on screen? It is the only thing that claims the audition
+// letters, and it claims them only while you can see it.
+function designerOpen() {
+  const pane = document.querySelector('.tabpane[data-pane="create"]');
+  return !!pane && !pane.hidden;
+}
+
 function setTab(name) {
   document.querySelectorAll("#tabs button").forEach(
     b => b.classList.toggle("on", b.dataset.tab === name));
