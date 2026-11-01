@@ -355,6 +355,10 @@ def handle_event(event: str, synth: GloveSynth,
         synth.toggle_harmony()
     elif event == "bounce":
         synth.bounce()
+    elif event == "session":
+        synth.toggle_session()
+    elif event == "export":
+        synth.export_loop()
     elif event == "mute":
         synth.toggle_drone()
     elif event == "live":

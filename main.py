@@ -788,6 +788,7 @@ def main() -> None:
                 # along on top.
                 synth.mute_instrument(True)
                 seq = None
+            synth.maybe_finish_session()
             _push_hand_leds(synth, glove_src, voice_source)
             publish = getattr(source, "publish", None)
             if publish is not None:
@@ -817,6 +818,8 @@ def main() -> None:
                     "granular": synth.granular_on, "slices": synth.slices_on,
                     "harmony": synth.harmony_on,
                     "bouncing": synth.is_bouncing,
+                    "session": synth.is_recording_session,
+                    "session_secs": round(synth.session_seconds, 1),
                     "recording": synth.is_recording,
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,

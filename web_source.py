@@ -21,7 +21,7 @@ PORT = 8765
 ALLOWED_EVENTS = {
     "punch", "record", "overdub", "loop", "granular", "slices", "mute", "live",
     "scene", "recalibrate", "song_clear", "reverse", "pitchlock", "freeze",
-    "harmony", "bounce",
+    "harmony", "bounce", "session", "export",
     "gate_on", "gate_off", "instrument_next",
 }
 

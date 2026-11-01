@@ -13,3 +13,6 @@ flexlog.csv
 # Instruments you designed are yours, not the project's. Delete the file
 # to start over; nothing breaks if it is missing.
 instruments.json
+
+# Performances and exported loops — audio, not source.
+recordings/

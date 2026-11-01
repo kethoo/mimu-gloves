@@ -7,6 +7,10 @@ this module smooths them per-sample so parameter changes never click.
 
 from __future__ import annotations
 
+import datetime
+import pathlib
+import wave
+
 import numpy as np
 import sounddevice as sd
 
@@ -50,6 +54,39 @@ HARMONY_GAIN = 0.55
 # same take played plain. Trimmed back by that much, so switching into
 # harmony is heard as harmony and not as someone turning it up.
 HARMONY_TRIM = 1.0 / (1.0 + 2.0 * HARMONY_GAIN ** 2) ** 0.5
+
+# A session is held in memory until it stops, at about 21 MB a minute. Ten
+# minutes is longer than anything anyone has played here and still small
+# enough that forgetting to stop costs nothing worse than a large file.
+SESSION_MAX = 10 * 60 * SAMPLE_RATE
+
+
+def _recordings_dir() -> pathlib.Path:
+    d = pathlib.Path(__file__).parent / "recordings"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _stamp() -> str:
+    return datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
+
+
+def _write_wav(path: pathlib.Path, data: np.ndarray) -> None:
+    """16-bit WAV, mono or stereo depending on the array's shape.
+
+    Scaled rather than clipped when it is too loud: a performance that ran
+    hot should come back quieter, not squared off.
+    """
+    data = np.asarray(data, dtype=np.float64)
+    channels = 1 if data.ndim == 1 else data.shape[1]
+    peak = float(np.abs(data).max()) if data.size else 0.0
+    if peak > 0.99:
+        data = data * (0.99 / peak)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes((np.clip(data, -1, 1) * 32767).astype("<i2").tobytes())
 N_SLICES = 4                          # slice mode: recording split into 4 pads
 VIBRATO_HZ = 5.5                      # wobble speed, roughly a singer's
 VIBRATO_DEPTH = 0.02                  # max pitch swing (+/-2%, ~a third of
@@ -278,6 +315,13 @@ class GloveSynth:
         # shaped differently from the first.
         self._bounce: list[np.ndarray] | None = None
         self._bounce_left = 0
+
+        # Session recording: the finished stereo output, kept in memory while
+        # it runs. Nothing in the instrument survived quitting before this —
+        # a performance only existed while it was being played.
+        self._session: list[np.ndarray] | None = None
+        self._session_frames = 0
+        self._session_full = False
 
         # Granular mode: the loop becomes a cloud of short windowed grains
         # drawn from wherever the hand is "pointing" in the recording.
@@ -621,6 +665,53 @@ class GloveSynth:
     @property
     def is_bouncing(self) -> bool:
         return self._bounce is not None
+
+    @property
+    def is_recording_session(self) -> bool:
+        return self._session is not None
+
+    @property
+    def session_seconds(self) -> float:
+        return self._session_frames / SAMPLE_RATE if self._session else 0.0
+
+    def toggle_session(self) -> None:
+        """Start or stop recording the performance to a file."""
+        if self._session is None:
+            self._session, self._session_frames = [], 0
+            self._session_full = False
+            print(f"\n[recording the session — press again to stop "
+                  f"(stops itself after {SESSION_MAX // SAMPLE_RATE // 60} min)]")
+            return
+        blocks, self._session = self._session, None
+        if not blocks:
+            print("\n[session: nothing recorded]")
+            return
+        audio = np.concatenate(blocks)
+        path = _recordings_dir() / f"session-{_stamp()}.wav"
+        _write_wav(path, audio)
+        print(f"\n[session saved — {path} "
+              f"({len(audio) / SAMPLE_RATE / 60:.0f}m "
+              f"{len(audio) / SAMPLE_RATE % 60:04.1f}s)]")
+
+    def maybe_finish_session(self) -> None:
+        """Stop a session that reached the cap. Called from the control loop,
+        because the callback cannot be the thing that opens a file."""
+        if self._session_full and self._session is not None:
+            self._session_full = False
+            print(f"\n[session reached the "
+                  f"{SESSION_MAX // SAMPLE_RATE // 60} minute limit]")
+            self.toggle_session()
+
+    def export_loop(self) -> None:
+        """Write the loop itself out, layers, bounces and all."""
+        buf = self._loop_buf
+        if buf is None or len(buf) < 2:
+            print("\n[nothing to export — record something first with 'v']")
+            return
+        path = _recordings_dir() / f"loop-{_stamp()}.wav"
+        _write_wav(path, buf)
+        print(f"\n[loop exported — {path} ({len(buf) / SAMPLE_RATE:.1f}s). "
+              f"Load it again with:  python main.py --web --song {path.name}]")
 
     def bounce(self) -> None:
         """Write what you are hearing back into the recording.
@@ -1103,6 +1194,16 @@ class GloveSynth:
 
         out[:, 0] = left.astype(np.float32)
         out[:, 1] = right.astype(np.float32)
+
+        # Everything the instrument made, tapped at the very end: both hands,
+        # the loop with all its layers, harmony, the effects and the stereo
+        # width. Collected here and written to disk when it stops, because
+        # opening a file from the audio callback is how you get a click.
+        if self._session is not None:
+            self._session.append(np.stack((left, right), axis=1).astype(np.float32))
+            self._session_frames += frames
+            if self._session_frames >= SESSION_MAX:
+                self._session_full = True
 
         # Tap for the on-screen scope. A ring write and nothing else: this
         # runs in the audio callback, so the FFT and the downsampling happen
