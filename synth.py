@@ -862,13 +862,28 @@ class GloveSynth:
             voice = None
             if self.loop_on:
                 if self.harmony_on:
+                    # Harmony is about the phrase, not about one moment, so
+                    # it walks through the take at the loop's own rate rather
+                    # than standing wherever the hand last pointed, the way
+                    # granular does. Without this it holds one chord for as
+                    # long as the hand is still, which reads as stuck.
+                    # A wrist move still seeks, exactly as in plain playback.
+                    self._rate += (self.target_rate - self._rate) * k
+                    self._scrub += (self.target_scrub - self._scrub) * 0.25
+                    if abs(self._scrub - self._scrub_held) > SEEK_MIN_MOVE:
+                        self._scrub_held = self._scrub
+                        self._loop_pos = self._scrub * (len(buf) - 1)
                     third, fifth = HARMONY_INTERVALS.get(
                         self.harmony_scale, HARMONY_INTERVALS["minor"])
                     voice = self._render_grains(
                         buf, frames,
                         ratios=(1.0, 2.0 ** (third / 12.0), 2.0 ** (fifth / 12.0)),
                         gains=(HARMONY_TRIM, HARMONY_GAIN * HARMONY_TRIM,
-                               HARMONY_GAIN * HARMONY_TRIM))
+                               HARMONY_GAIN * HARMONY_TRIM),
+                        at=self._loop_pos)
+                    step = -self._rate if self.reverse else self._rate
+                    self._loop_pos = float(
+                        (self._loop_pos + step * frames) % len(buf))
                 elif self.granular_on:
                     voice = self._render_grains(buf, frames)
                 else:
@@ -1514,7 +1529,8 @@ class GloveSynth:
 
     def _render_grains(self, buf: np.ndarray, frames: int,
                        ratios: tuple[float, ...] = (1.0,),
-                       gains: tuple[float, ...] = (1.0,)) -> np.ndarray:
+                       gains: tuple[float, ...] = (1.0,),
+                       at: float | None = None) -> np.ndarray:
         """Granular cloud: short Hann-windowed grains drawn from the scrub
         position. Time is frozen — the hand moves the playhead by rolling.
 
@@ -1523,7 +1539,7 @@ class GloveSynth:
         are the same sound at the same instant, only transposed, so they move
         together instead of drifting apart.
         """
-        self._spawn_grains(buf, frames)
+        self._spawn_grains(buf, frames, at)
         out = np.zeros(frames)
         for ratio, gain in zip(ratios, gains):
             out += self._grain_voice(buf, frames, ratio) * gain
@@ -1536,14 +1552,25 @@ class GloveSynth:
         self._grains = alive
         return out
 
-    def _spawn_grains(self, buf: np.ndarray, frames: int) -> None:
-        """Start whatever grains this block is due."""
-        self._scrub += (self.target_scrub - self._scrub) * 0.15
+    def _spawn_grains(self, buf: np.ndarray, frames: int,
+                      at: float | None = None) -> None:
+        """Start whatever grains this block is due.
+
+        `at` is a position in samples, for a mode that travels through the
+        take on its own. Left out, the grains come from wherever the hand is
+        pointing and time stands still — which is what granular is for, and
+        what harmony is not.
+        """
         span = len(buf) - GRAIN_LEN - 1
+        if at is None:
+            self._scrub += (self.target_scrub - self._scrub) * 0.15
+            centre = self._scrub * span
+        else:
+            centre = at
         self._grain_timer -= frames
         while self._grain_timer <= 0 and span > 0:
             jitter = self._rng.uniform(-0.03, 0.03) * SAMPLE_RATE
-            start = int(np.clip(self._scrub * span + jitter, 0, span))
+            start = int(np.clip(centre + jitter, 0, span))
             self._grains.append([start, 0])
             self._grain_timer += GRAIN_HOP
 
