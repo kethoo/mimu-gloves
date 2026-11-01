@@ -215,7 +215,7 @@ def _poly_saw(p: np.ndarray, dt: float) -> np.ndarray:
 
 class GloveSynth:
     def __init__(self, input_device=None, output_device=None,
-                 no_mic: bool = False) -> None:
+                 no_mic: bool = False, open_stream: bool = True) -> None:
         # PortAudio binds a stream to whatever device was default when the
         # stream was *created*. Switching the system default afterwards (say,
         # connecting AirPods mid-session) does not move an already-open
@@ -422,6 +422,12 @@ class GloveSynth:
         # `no_mic` forces that fallback: a duplex stream can open cleanly and
         # then never call back when the OS has not granted microphone
         # access, which is silence with nothing reporting a fault.
+        # measure.py builds the engine without a sound card, so the deadline
+        # it reports is the engine's own cost and not the driver's mood.
+        if not open_stream:
+            self._stream = None
+            self._has_input = False
+            return
         try:
             if no_mic:
                 raise RuntimeError("--no-mic")
