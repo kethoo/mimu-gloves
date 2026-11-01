@@ -84,7 +84,7 @@ INSTRUMENT_HUE = {"saw": 0, "organ": 30, "strings": 60, "bell": 95,
 # The loop hand says which mode it is in. Far enough apart to tell by eye
 # under fabric, which blurs them.
 MODE_HUE = {"normal": 145, "granular": 190, "slices": 20,
-            "freeze": 125, "reverse": 225}
+            "freeze": 125, "reverse": 225, "harmony": 85}
 
 
 def _instrument_hue(name: str) -> int:
@@ -128,7 +128,8 @@ def _push_hand_leds(synth, live_src, loop_src) -> None:
             loop_src.set_led(MODE_HUE["normal"], 110, LED_BREATHE, 0.0, 0)
         else:
             mode = ("granular" if synth.granular_on
-                    else "slices" if synth.slices_on else "normal")
+                    else "slices" if synth.slices_on
+                    else "harmony" if synth.harmony_on else "normal")
             if synth.reverse:
                 pat = LED_REVERSE
             elif synth.slices_on:
@@ -814,6 +815,7 @@ def main() -> None:
                     "reverse": synth.reverse,
                     "pitch_lock": synth.pitch_lock,
                     "granular": synth.granular_on, "slices": synth.slices_on,
+                    "harmony": synth.harmony_on,
                     "recording": synth.is_recording,
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,
@@ -871,7 +873,8 @@ def main() -> None:
                         "blend": min(synth.target_voice_volume / 0.9, 1.0),
                         "frozen": synth.freeze_on,
                         "mode": ("granular" if synth.granular_on
-                                 else "slices" if synth.slices_on else "normal"),
+                                 else "slices" if synth.slices_on
+                                 else "harmony" if synth.harmony_on else "normal"),
                         "preset": loop_mapping.PRESETS[voice.preset][0],
                         "preset_n": voice.preset + 1,
                         "preset_total": len(loop_mapping.PRESETS),

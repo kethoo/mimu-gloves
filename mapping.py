@@ -192,6 +192,11 @@ def apply_scene(synth: GloveSynth, state: HandState | None = None,
     synth.set_instrument(instrument, announce=False)
     synth.granular_on = granular
     synth.slices_on = slices
+    # Harmony picks its third out of the scale, so the scene has to say which
+    # one is playing. A minor third over a major scene is the whole reason
+    # this is not a fixed interval.
+    synth.harmony_scale = scale
+    synth.harmony_on = False
     # The new scale may be shorter than the old one.
     st.last_step = min(st.last_step, len(SCALES[scale]) - 1)
     if announce:
@@ -346,6 +351,8 @@ def handle_event(event: str, synth: GloveSynth,
         synth.toggle_granular()
     elif event == "slices":
         synth.toggle_slices()
+    elif event == "harmony":
+        synth.toggle_harmony()
     elif event == "mute":
         synth.toggle_drone()
     elif event == "live":

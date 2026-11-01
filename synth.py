@@ -31,6 +31,25 @@ FILTER_OPEN = 15000.0
 
 GRAIN_LEN = int(0.09 * SAMPLE_RATE)   # granular mode: 90 ms grains...
 GRAIN_HOP = int(0.045 * SAMPLE_RATE)  # ...spawned every 45 ms (2x overlap)
+
+# Harmony mode stacks a third and a fifth on the recording. The third has to
+# come from the scene's own scale: +4 semitones is a major third and is wrong
+# in a minor key, which is most of them here. Whole-tone has neither a minor
+# third nor a perfect fifth, so it takes the intervals it does have.
+HARMONY_INTERVALS = {
+    "pentatonic": (3, 7),
+    "minor":      (3, 7),
+    "dorian":     (3, 7),
+    "whole":      (4, 8),
+}
+# Under the original rather than beside it: harmony that matches the lead in
+# level stops sounding like harmony and starts sounding like three takes.
+HARMONY_GAIN = 0.55
+# Three voices at different pitches are uncorrelated, so they sum in power
+# rather than amplitude and the chord lands about a quarter louder than the
+# same take played plain. Trimmed back by that much, so switching into
+# harmony is heard as harmony and not as someone turning it up.
+HARMONY_TRIM = 1.0 / (1.0 + 2.0 * HARMONY_GAIN ** 2) ** 0.5
 N_SLICES = 4                          # slice mode: recording split into 4 pads
 VIBRATO_HZ = 5.5                      # wobble speed, roughly a singer's
 VIBRATO_DEPTH = 0.02                  # max pitch swing (+/-2%, ~a third of
@@ -260,6 +279,15 @@ class GloveSynth:
         self._grains: list[list[int]] = []  # [start_sample, age] per grain
         self._grain_timer = 0
         self._grain_win = np.hanning(GRAIN_LEN)
+
+        # Harmony mode: the same grains, read again at two higher pitches and
+        # mixed under the original, so the take sings a chord against itself.
+        # It rides on granular because that is the only path where pitch is
+        # independent of time: a second reader at 1.5x speed on the ordinary
+        # loop would also run through the buffer half again as fast and drift
+        # away from the voice it is supposed to be harmonising.
+        self.harmony_on = False
+        self.harmony_scale = "pentatonic"   # mapping.apply_scene sets this
 
         # Slice mode: punches fire one-shot chunks of the recording.
         self.slices_on = False
@@ -689,6 +717,19 @@ class GloveSynth:
             else "\n[normal loop mode]"
         )
 
+    def toggle_harmony(self) -> None:
+        """Harmony is a way of reading the grains, so it owns granular while
+        it is on and hands it back when it is switched off."""
+        self.harmony_on = not self.harmony_on
+        if self.harmony_on:
+            self.slices_on = False
+            third, fifth = HARMONY_INTERVALS.get(
+                self.harmony_scale, HARMONY_INTERVALS["minor"])
+            print(f"\n[harmony: +{third} and +{fifth} semitones under the take, "
+                  f"from the {self.harmony_scale} scale]")
+        else:
+            print("\n[harmony off]")
+
     def toggle_slices(self) -> None:
         self.slices_on = not self.slices_on
         print(
@@ -763,6 +804,7 @@ class GloveSynth:
         """
         self.loop_on = False
         self.granular_on = False
+        self.harmony_on = False
         self._loop_buf = None
         self._loop_pos = 0.0
         self._grains = []
@@ -819,7 +861,15 @@ class GloveSynth:
         if buf is not None and len(buf) > 1:
             voice = None
             if self.loop_on:
-                if self.granular_on:
+                if self.harmony_on:
+                    third, fifth = HARMONY_INTERVALS.get(
+                        self.harmony_scale, HARMONY_INTERVALS["minor"])
+                    voice = self._render_grains(
+                        buf, frames,
+                        ratios=(1.0, 2.0 ** (third / 12.0), 2.0 ** (fifth / 12.0)),
+                        gains=(HARMONY_TRIM, HARMONY_GAIN * HARMONY_TRIM,
+                               HARMONY_GAIN * HARMONY_TRIM))
+                elif self.granular_on:
                     voice = self._render_grains(buf, frames)
                 else:
                     # Variable-rate loop (tilt = speed & pitch), linear interp.
@@ -1022,13 +1072,16 @@ class GloveSynth:
         """normal -> granular -> slices -> normal, on one posture instead of
         three separate keyboard toggles."""
         if self.granular_on:
-            self.granular_on, self.slices_on = False, True
+            self.granular_on, self.slices_on, self.harmony_on = False, True, False
             mode = "slices: flick fires a chunk"
         elif self.slices_on:
-            self.granular_on, self.slices_on = False, False
+            self.granular_on, self.slices_on, self.harmony_on = False, False, True
+            mode = f"harmony: a third and a fifth, in {self.harmony_scale}"
+        elif self.harmony_on:
+            self.granular_on, self.slices_on, self.harmony_on = False, False, False
             mode = "normal loop"
         else:
-            self.granular_on, self.slices_on = True, False
+            self.granular_on, self.slices_on, self.harmony_on = True, False, False
             mode = "granular: roll scrubs the playhead"
         print(f"\n[loop mode: {mode}]")
 
@@ -1459,11 +1512,33 @@ class GloveSynth:
         self._cab = [y1, y2, hp]
         return out
 
-    def _render_grains(self, buf: np.ndarray, frames: int) -> np.ndarray:
+    def _render_grains(self, buf: np.ndarray, frames: int,
+                       ratios: tuple[float, ...] = (1.0,),
+                       gains: tuple[float, ...] = (1.0,)) -> np.ndarray:
         """Granular cloud: short Hann-windowed grains drawn from the scrub
-        position. Time is frozen — the hand moves the playhead by rolling."""
-        self._scrub += (self.target_scrub - self._scrub) * 0.15
+        position. Time is frozen — the hand moves the playhead by rolling.
+
+        One voice per entry in `ratios`, every one of them reading the same
+        grains. That sharing is the whole trick behind harmony: the voices
+        are the same sound at the same instant, only transposed, so they move
+        together instead of drifting apart.
+        """
+        self._spawn_grains(buf, frames)
         out = np.zeros(frames)
+        for ratio, gain in zip(ratios, gains):
+            out += self._grain_voice(buf, frames, ratio) * gain
+        # Aged once, after every voice has read them, not once per voice.
+        alive = []
+        for start, age in self._grains:
+            n = min(frames, GRAIN_LEN - age)
+            if age + n < GRAIN_LEN:
+                alive.append([start, age + n])
+        self._grains = alive
+        return out
+
+    def _spawn_grains(self, buf: np.ndarray, frames: int) -> None:
+        """Start whatever grains this block is due."""
+        self._scrub += (self.target_scrub - self._scrub) * 0.15
         span = len(buf) - GRAIN_LEN - 1
         self._grain_timer -= frames
         while self._grain_timer <= 0 and span > 0:
@@ -1471,13 +1546,32 @@ class GloveSynth:
             start = int(np.clip(self._scrub * span + jitter, 0, span))
             self._grains.append([start, 0])
             self._grain_timer += GRAIN_HOP
-        alive = []
+
+    def _grain_voice(self, buf: np.ndarray, frames: int,
+                     ratio: float) -> np.ndarray:
+        """The live grains, read at `ratio` times their recorded pitch.
+
+        The window is indexed by the grain's age and the sample by age times
+        the ratio. That is the whole of pitch shifting: where the grain sits
+        and how long it lasts are unchanged, only how fast it is read, so the
+        cloud keeps its rhythm while the note moves.
+        """
+        out = np.zeros(frames)
         for start, age in self._grains:
             n = min(frames, GRAIN_LEN - age)
-            out[:n] += buf[start + age : start + age + n] * self._grain_win[age : age + n]
-            if age + n < GRAIN_LEN:
-                alive.append([start, age + n])
-        self._grains = alive
+            if n <= 0:
+                continue
+            win = self._grain_win[age : age + n]
+            if ratio == 1.0:
+                out[:n] += buf[start + age : start + age + n] * win
+                continue
+            # Read faster than 1.0 and a grain reaches past the span its
+            # start was chosen within, so the index wraps rather than
+            # clamping — holding on the last sample would be a click.
+            pos = start + (age + np.arange(n)) * ratio
+            i0 = pos.astype(np.intp) % (len(buf) - 1)
+            frac = pos - np.floor(pos)
+            out[:n] += (buf[i0] * (1.0 - frac) + buf[i0 + 1] * frac) * win
         return out
 
     def _render_shot(self, buf: np.ndarray, frames: int) -> np.ndarray | None:
