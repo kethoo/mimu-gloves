@@ -25,11 +25,24 @@ POSIX terminal — use `--web` and drive the hands from the browser panel.
 ## Browser frontend (`--web`)
 
 `main.py --web` opens `ui.html` and starts a WebSocket server on
-`ws://127.0.0.1:8765`. The page is the glove: drag the XY pad (x = roll,
-y = tilt), slide yaw, and click — or key — the same actions as terminal
-mode. It also shows live state: hand values, active modes, loop length,
-and a REC indicator. The browser is just another `GloveSource`; audio
+`ws://127.0.0.1:8765`. The browser is just another `GloveSource`; audio
 still runs in Python.
+
+With no glove plugged in the page *is* the glove: each hand has its own pad
+(x = roll, y = tilt) plus a yaw slider, so both hands can be played from one
+screen. With a glove connected the pads become displays and the page supplies
+the buttons the hardware does not have.
+
+Three tabs:
+
+| Tab | What it holds |
+| --- | --- |
+| **Play** | Both hands side by side, the mode cards (capture / texture / voice) and PUNCH |
+| **Song** | Load a file or link onto the deck, scrub it, see the waveform and spectrum |
+| **Create** | Design an instrument and audition it live — see below |
+
+The instrument rail across the top switches voices; your own designs appear
+after the built-in seven, each with a small × to delete it.
 
 ## Tuning the feel
 
@@ -62,7 +75,7 @@ was removed — convincing fake data is worse than silence.)
 
 ## Instruments
 
-Seven instruments, switchable live (keys `1`–`7` or the UI): **Saw Lead**,
+Seven built in, switchable live (keys `1`–`7` or the UI): **Saw Lead**,
 **Organ** (drawbar additive), **String Pad** (detuned saw ensemble, slow
 bow), **FM Bell** (inharmonic 2-op FM with a decaying modulation index),
 **Flute** (vibrato sine with a breath chiff on the onset), **Plucked
@@ -100,6 +113,35 @@ apart even though their spectra differed — the ear identifies an
 instrument mostly by its attack and decay, not by its steady-state
 harmonics. Instruments marked *struck* (bell, pluck) re-articulate on a
 note change instead of gliding, and a punch re-strikes them.
+
+## Designing your own instrument (`instruments.py`, Create tab)
+
+Pick one of four engines, start from a character, then shape it with six
+macro knobs. What you save joins the instrument rail and the point gesture
+walks onto it like any built-in; the store is `instruments.json`.
+
+| Engine | What it is |
+| --- | --- |
+| `additive` | Six sine partials, amplitudes set individually |
+| `saws` | Detuned saw ensemble |
+| `fm` | 2-op FM; the ratio decides metallic vs. warm |
+| `string` | Karplus-Strong, same as the pluck |
+
+The knobs are per-engine (`MACROS`), so "bright" moves whatever actually
+makes *that* engine brighter — cutoff and partials for additive, cutoff and
+modulation index for FM — rather than exposing one generic filter.
+
+It needed that. An earlier version let you move every control and still
+produced near-identical sounds: measured as the cosine similarity of
+normalised FFT magnitudes, two "different" designs scored **0.98**. Two
+causes. The starting values were the built-ins' own numbers, so a small edit
+landed back on a built-in; and, worse, every patch shared one filter
+instance, so the parameter that shapes timbre most was the same for all of
+them. A filter per patch took the measured similarity to **0.68**, which is
+the difference between "a preset" and "a preset you made".
+
+`--no-mic` is useful here: the designer auditions by playing itself, so you
+do not need a glove or a fist held to hear what a knob does.
 
 ## Driving a DAW instead (--midi)
 
@@ -408,6 +450,17 @@ The simulator (`sensors.py`) and the BLE receiver (`ble_receiver.py`) emit
 identical `SensorFrame` objects, so switching to real hardware is just
 `python main.py --ble` — mapping and synth code don't change.
 
+| File | What it owns |
+| --- | --- |
+| `main.py` | Entry point, control loop, flags |
+| `synth.py` | Audio: voices, filter, reverb, looper |
+| `mapping.py` / `loop_mapping.py` | Gestures → parameters, one file per hand |
+| `ble_receiver.py` / `sensors.py` / `web_source.py` | The three `GloveSource`s |
+| `instruments.py` | Designed instruments and their store |
+| `song.py` / `melody.py` | Loading audio and MIDI |
+| `ui.html` | Browser panel |
+| `esp32/glove_ble/` | Firmware |
+
 The same symmetry applies on the output side: `midi_out.py` is a second sink
 that reads the target values `mapping.apply` already set on the synth, rather
 than mapping gestures a second time. One place turns a gesture into musical
@@ -585,6 +638,29 @@ That is why the LED's DIN sits on GPIO23 and not 16: on 16 it would work
 only in a build **without** `PSRAM=enabled`, which drops the recording
 buffer from 8 s to whatever internal RAM spares. The sketch refuses to
 compile if `LED_PIN` and PSRAM are ever asked for the same pin.
+
+### What the two LEDs say
+
+The one on the board reports the hardware and is driven by the glove itself,
+so it works with no laptop attached. On a battery there is no serial console,
+which makes it the only diagnostic there is — the fast red is the BNO08x
+stall, visible on the hand instead of only in the log.
+
+| Board LED | |
+| --- | --- |
+| dim blue pulse | powered, advertising, nobody connected |
+| dim green | laptop connected |
+| solid red | recording |
+| blue blink | sending the take over BLE |
+| **fast red blink** | **sensor stalled** |
+
+The one sewn into the glove reports the music and is driven by the laptop
+over a fourth characteristic — the only one written to rather than notified
+from. Hue is the instrument or loop mode, brightness is how hard the hand is
+playing, and the beat is the loop: once per cycle, four times in slices so
+the chop grid is visible, backwards in reverse, and stopped dead in freeze.
+The glove animates from its own clock between updates, so a dropped packet
+costs nothing.
 
 `UploadSpeed=115200` is required — the USB adapter fails at the default
 921600, and omitting it is a silent way to waste ten minutes. Add
