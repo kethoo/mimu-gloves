@@ -816,6 +816,7 @@ def main() -> None:
                     "pitch_lock": synth.pitch_lock,
                     "granular": synth.granular_on, "slices": synth.slices_on,
                     "harmony": synth.harmony_on,
+                    "bouncing": synth.is_bouncing,
                     "recording": synth.is_recording,
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,

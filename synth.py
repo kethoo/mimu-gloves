@@ -272,6 +272,13 @@ class GloveSynth:
         self._overdub = False
         self._overdub_from = 0.0  # loop position when the overdub started
 
+        # Bounce: write what you are hearing back into the recording. Until
+        # this existed a gesture only ever shaped playback, so every effect
+        # applied to the whole buffer at once and a second layer could not be
+        # shaped differently from the first.
+        self._bounce: list[np.ndarray] | None = None
+        self._bounce_left = 0
+
         # Granular mode: the loop becomes a cloud of short windowed grains
         # drawn from wherever the hand is "pointing" in the recording.
         self.granular_on = False
@@ -610,6 +617,62 @@ class GloveSynth:
             self._start_recording(overdub=False)
         else:
             self._stop_recording()
+
+    @property
+    def is_bouncing(self) -> bool:
+        return self._bounce is not None
+
+    def bounce(self) -> None:
+        """Write what you are hearing back into the recording.
+
+        Harmony, granular, the slices and the effects all live outside the
+        buffer and shape it on the way out, which means they apply to every
+        layer at once. Capturing one cycle of the processed output and making
+        it the recording is what lets the next layer be shaped differently
+        from this one — the usual looper move, under its usual name.
+        """
+        if self._loop_buf is None or len(self._loop_buf) < 2:
+            print("\n[nothing to bounce — record something first with 'v']")
+            return
+        if self._bounce is not None:
+            self._bounce = None
+            print("\n[bounce cancelled]")
+            return
+        self._bounce = []
+        self._bounce_left = len(self._loop_buf)
+        self._loop_pos = 0.0          # capture from the top, not mid-phrase
+        self._scrub_held = self._scrub
+        self.loop_on = True
+        print(f"\n[bouncing one cycle — "
+              f"{len(self._loop_buf) / SAMPLE_RATE:.1f}s, hold still...]")
+
+    def _capture_bounce(self, block: np.ndarray) -> None:
+        """Collect processed output until a whole loop has gone past."""
+        take = block[: self._bounce_left]
+        self._bounce.append(take.copy())
+        self._bounce_left -= len(take)
+        if self._bounce_left > 0:
+            return
+
+        baked = np.concatenate(self._bounce)
+        self._bounce = None
+        peak = float(np.abs(baked).max())
+        if peak < 1e-5:
+            print("\n[bounce: nothing was playing — loop left as it was]")
+            return
+        baked *= 0.5 / peak
+        self.loop_on = False          # keep the callback off the swap
+        self._loop_buf = baked
+        self._loop_pos = 0.0
+        self._grains = []
+        self._shot = None
+        self.loop_on = True
+        # Those effects are in the samples now. Leaving the modes on would
+        # apply them to their own output a second time.
+        self.harmony_on = self.granular_on = self.slices_on = False
+        self.reverse = False
+        print(f"\n[bounced — {len(baked) / SAMPLE_RATE:.1f}s. What you heard "
+              "is now the recording; layer on top of it with 'o']")
 
     def toggle_overdub(self) -> None:
         """Like record, but the take is layered ON TOP of the playing loop,
@@ -1020,9 +1083,15 @@ class GloveSynth:
         if v_in is not None:
             v = self._process_voice(v_in, frames)
             v = np.tanh(v)   # its own soft clip; reverb tails can stack up
+            if self._bounce is not None:
+                self._capture_bounce(v)
             v_angle = (self._v_pan + 1.0) * (np.pi / 4.0)
             left = left + v * np.cos(v_angle)
             right = right + v * np.sin(v_angle)
+        elif self._bounce is not None:
+            # Silence still counts, or a bounce started with nothing playing
+            # would never reach its end and never hand the loop back.
+            self._capture_bounce(np.zeros(frames))
 
         # Stereo width, driven by how far the two hands' roll differs.
         # Mid/side: collapse toward mono at 0, exaggerate the difference above 1.

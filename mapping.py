@@ -353,6 +353,8 @@ def handle_event(event: str, synth: GloveSynth,
         synth.toggle_slices()
     elif event == "harmony":
         synth.toggle_harmony()
+    elif event == "bounce":
+        synth.bounce()
     elif event == "mute":
         synth.toggle_drone()
     elif event == "live":
