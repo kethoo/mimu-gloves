@@ -869,7 +869,13 @@ class GloveSynth:
         print(f"\n[{label} loaded — {len(samples) / SAMPLE_RATE:.1f}s looping]")
 
     def toggle_granular(self) -> None:
+        # Granular and harmony are two readings of the same grains, and the
+        # callback can only take one, so leaving both on lit two cards and
+        # played one. Slices is not in that argument: a fired chunk is mixed
+        # on top of whatever is playing, so it combines with either.
         self.granular_on = not self.granular_on
+        if self.granular_on:
+            self.harmony_on = False
         self._grains = []
         print(
             "\n[granular mode: roll scrubs through the frozen voice]"
@@ -882,7 +888,7 @@ class GloveSynth:
         it is on and hands it back when it is switched off."""
         self.harmony_on = not self.harmony_on
         if self.harmony_on:
-            self.slices_on = False
+            self.granular_on = False      # the one mode it genuinely replaces
             third, fifth = HARMONY_INTERVALS.get(
                 self.harmony_scale, HARMONY_INTERVALS["minor"])
             print(f"\n[harmony: +{third} and +{fifth} semitones under the take, "
@@ -1260,20 +1266,26 @@ class GloveSynth:
             print("\n[released]")
 
     def cycle_loop_mode(self) -> None:
-        """normal -> granular -> slices -> normal, on one posture instead of
-        three separate keyboard toggles."""
+        """normal -> granular -> harmony -> normal, on one posture.
+
+        Only the three ways of reading the loop are in the cycle, because
+        only they exclude one another. Slices used to be a fourth step, which
+        made the posture disagree with the buttons: it cannot both be a mode
+        of its own and something you add to one. It is now left alone here
+        and toggled on its own, so the two paths mean the same thing.
+        """
         if self.granular_on:
-            self.granular_on, self.slices_on, self.harmony_on = False, True, False
-            mode = "slices: flick fires a chunk"
-        elif self.slices_on:
-            self.granular_on, self.slices_on, self.harmony_on = False, False, True
+            self.granular_on, self.harmony_on = False, True
             mode = f"harmony: a third and a fifth, in {self.harmony_scale}"
         elif self.harmony_on:
-            self.granular_on, self.slices_on, self.harmony_on = False, False, False
+            self.granular_on, self.harmony_on = False, False
             mode = "normal loop"
         else:
-            self.granular_on, self.slices_on, self.harmony_on = True, False, False
+            self.granular_on, self.harmony_on = True, False
             mode = "granular: roll scrubs the playhead"
+        self._grains = []
+        if self.slices_on:
+            mode += "  (slices still on)"
         print(f"\n[loop mode: {mode}]")
 
     def trigger_stutter(self) -> None:
