@@ -1265,27 +1265,35 @@ class GloveSynth:
             self._st_left = int(0.25 * SAMPLE_RATE)   # let it fade, not cut
             print("\n[released]")
 
-    def cycle_loop_mode(self) -> None:
-        """normal -> granular -> harmony -> normal, on one posture.
+    # The posture walks these in order. It is a tour of four useful settings
+    # rather than three independent switches: the glove has one posture to
+    # spare and the panel can still make any combination it likes. Each step
+    # names all three flags, so there is never a question of what is on.
+    #
+    # Slices earns the fourth step because it is the one that combines — a
+    # fired chunk mixes over whatever is playing — and the pairing with
+    # harmony is the reason the two were untangled in the first place.
+    LOOP_MODES = (
+        (False, False, False, "normal loop"),
+        (True,  False, False, "granular: roll scrubs the playhead"),
+        (False, True,  False, "harmony"),
+        (False, True,  True,  "harmony + slices: flick fires a chunk over it"),
+    )
 
-        Only the three ways of reading the loop are in the cycle, because
-        only they exclude one another. Slices used to be a fourth step, which
-        made the posture disagree with the buttons: it cannot both be a mode
-        of its own and something you add to one. It is now left alone here
-        and toggled on its own, so the two paths mean the same thing.
-        """
-        if self.granular_on:
-            self.granular_on, self.harmony_on = False, True
-            mode = f"harmony: a third and a fifth, in {self.harmony_scale}"
-        elif self.harmony_on:
-            self.granular_on, self.harmony_on = False, False
-            mode = "normal loop"
+    def cycle_loop_mode(self) -> None:
+        """Step to the next of the four, on one posture."""
+        now = (self.granular_on, self.harmony_on, self.slices_on)
+        for i, step in enumerate(self.LOOP_MODES):
+            if step[:3] == now:
+                nxt = self.LOOP_MODES[(i + 1) % len(self.LOOP_MODES)]
+                break
         else:
-            self.granular_on, self.harmony_on = True, False
-            mode = "granular: roll scrubs the playhead"
+            nxt = self.LOOP_MODES[0]   # arrived from some panel combination
+        self.granular_on, self.harmony_on, self.slices_on = nxt[:3]
         self._grains = []
-        if self.slices_on:
-            mode += "  (slices still on)"
+        mode = nxt[3]
+        if self.harmony_on:
+            mode += f" ({self.harmony_scale})"
         print(f"\n[loop mode: {mode}]")
 
     def trigger_stutter(self) -> None:
