@@ -1125,9 +1125,12 @@ function icon(name, cls) {
 // Fill every data-icon button once the set is defined. A mode card builds
 // its whole face from its data- attributes; everything else just gets the
 // icon put in front of the label it already had.
-const MODE_KEY = {record: "v", overdub: "o", loop: "p", granular: "g",
-                  slices: "b", freeze: "f", reverse: "j", pitchlock: "k",
-                  live: "l", mute: "m"};
+// Turned round from KEYS rather than written out again. The two were
+// separate tables saying the same thing, and they drifted: four cards added
+// later worked from the keyboard but showed an empty key chip, because only
+// one of the two lists had been updated.
+const MODE_KEY = Object.fromEntries(
+  Object.entries(KEYS).filter(([k]) => k !== " ").map(([k, ev]) => [ev, k]));
 document.querySelectorAll("[data-icon]").forEach(b => {
   if (b.classList.contains("mode")) {
     b.innerHTML =
