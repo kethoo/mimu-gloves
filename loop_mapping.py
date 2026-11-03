@@ -49,6 +49,8 @@ from mapping import (
     FLEX_CURVE,
     PITCH_RANGE,
     POSTURE_HOLD,
+    posture_hold,
+    step_posture,
     ROLL_RANGE,
     YAW_RANGE,
     HandState,
@@ -129,14 +131,7 @@ def apply(frame: SensorFrame, synth: GloveSynth,
     # Same dwell/hysteresis rules as the live hand: a posture fires once on
     # entry and only after being held, because the index finger is also a
     # continuous control and sweeps through the posture regions constantly.
-    posture = _read_posture(frame.flex, frame.flex2)
-    if posture != st.pending:
-        st.pending, st.pending_since = posture, frame.t
-    if posture is None:
-        st.posture = None
-    elif posture != st.posture and frame.t - st.pending_since >= POSTURE_HOLD[posture]:
-        st.posture = posture
-        _fire_posture(posture, synth)
+    step_posture(frame, st, synth, _fire_posture)
 
     # ---- continuous control ----------------------------------------------
     # Roll -> scrub. The signature gesture of this hand: in granular mode time

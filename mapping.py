@@ -127,6 +127,17 @@ POSTURE_LO = 0.28    # straighter than this counts as extended
 # 0.84 s below the threshold, so 0.8 s was not enough margin.
 POSTURE_HOLD = {"fist": 0.35, "point": 0.35, "open": 1.00}
 
+# A three-sensor build has one finger on one hand doing both jobs: shaping a
+# continuous parameter and standing in for a posture. These two numbers are
+# all that separates the jobs. The bend has to go past where the control
+# range is useful, and it has to stay there — a performer pushing a blend to
+# maximum passes through, a performer meaning a fist stops.
+POSTURE_SOLO_HI = 0.85
+POSTURE_HOLD_SOLO = {"fist": 0.90, "open": 1.00}
+# Frames voted on before a reading is believed. Five at 100 Hz is 50 ms:
+# shorter than any gesture and longer than any noise spike.
+POSTURE_VOTE = 5
+
 class HandState:
     """Everything `apply` remembers between ticks, for ONE hand.
 
@@ -143,6 +154,7 @@ class HandState:
         self.posture: str | None = None    # posture currently committed to
         self.pending: str | None = None    # being held, not yet committed
         self.pending_since = 0.0
+        self.recent: list[str | None] = []  # last few reads, for the vote
 
 
 # The single-glove default, so `apply(frame, synth)` keeps working unchanged.
@@ -159,13 +171,21 @@ def _norm(value: float, limit: float) -> float:
 
 
 def _read_posture(flex: float | None, flex2: float | None) -> str | None:
-    """Which of the three postures the hand is in, or None for "playing".
+    """Which posture the hand is in, or None for "playing".
 
     Anything between the two thresholds is deliberately nothing: that gap is
     where the index finger lives while it is working as the volume control.
+
+    With one sensor instead of two, a hand can still say "curled" and
+    "straight" but it cannot say "point", because point is the two fingers
+    disagreeing. Refusing to read anything at all was the old behaviour and
+    it cost all three, which is the wrong trade when the second sensor is
+    missing from the build or has simply died.
     """
-    if flex is None or flex2 is None:
+    if flex is None and flex2 is None:
         return None
+    if flex is None or flex2 is None:
+        return _solo_posture(flex if flex is not None else flex2)
     if flex > POSTURE_HI and flex2 > POSTURE_HI:
         return "fist"
     if flex < POSTURE_LO and flex2 < POSTURE_LO:
@@ -173,6 +193,66 @@ def _read_posture(flex: float | None, flex2: float | None) -> str | None:
     if flex < POSTURE_LO and flex2 > POSTURE_HI:
         return "point"
     return None
+
+
+def _solo_posture(f: float) -> str | None:
+    """Fist and open from a single finger.
+
+    The threshold is higher than POSTURE_HI and the dwell longer, because
+    that finger is also a continuous control. With two sensors a fist needs
+    both curled, so a swell on the index alone can never fire one; with one
+    there is nothing to disambiguate it, and the only thing left to separate
+    "I am using this as a control" from "I mean a fist" is that a fist is
+    bent harder and held.
+    """
+    if f > POSTURE_SOLO_HI:
+        return "fist"
+    if f < POSTURE_LO:
+        return "open"
+    return None
+
+
+def step_posture(frame, st, synth, fire=None) -> None:
+    """One tick of the posture state machine, for either hand.
+
+    The two hands ran identical copies of this and it is fiddly enough that
+    two copies is one too many. `fire` is what differs: the same fist means
+    "make a sound" on one hand and "freeze" on the other.
+
+    The vote is what makes a single sensor workable. A posture must be held
+    for its dwell, and the timer restarts whenever the reading changes — so
+    with two sensors, where the thresholds sit far from where a finger rests,
+    noise never interrupts it. With one sensor the threshold has to sit near
+    the top of the finger's travel, close enough that noise crosses it
+    constantly: a deliberate fist held at 0.97 with the measured noise dips
+    below 0.90 about one frame in eight, which restarted the dwell every time
+    and fired nothing at all. Measured: 0 of 30 deliberate fists detected.
+    Taking the majority of the last five reads costs 50 ms and removes it.
+    """
+    read = _read_posture(frame.flex, frame.flex2)
+    st.recent.append(read)
+    del st.recent[:-POSTURE_VOTE]
+    posture = max(set(st.recent), key=st.recent.count)
+
+    if posture != st.pending:
+        st.pending, st.pending_since = posture, frame.t
+    if posture is None:
+        st.posture = None              # leaving a posture re-arms it
+    elif (posture != st.posture and frame.t - st.pending_since
+          >= posture_hold(posture, frame.flex, frame.flex2)):
+        st.posture = posture
+        (fire or _fire_posture)(posture, synth)
+
+
+def posture_hold(posture: str, flex: float | None, flex2: float | None) -> float:
+    """How long a posture must be held before it fires.
+
+    Longer when only one sensor is reporting: that finger is doing two jobs
+    at once, so the only protection left is that a posture is deliberate.
+    """
+    if (flex is None) != (flex2 is None):
+        return POSTURE_HOLD_SOLO.get(posture, 1.0)
+    return POSTURE_HOLD[posture]
 
 
 def _fire_posture(posture: str, synth: GloveSynth) -> None:
@@ -228,14 +308,7 @@ def apply(frame: SensorFrame, synth: GloveSynth,
     st = state or _default
 
     # ---- postures ---------------------------------------------------------
-    posture = _read_posture(frame.flex, frame.flex2)
-    if posture != st.pending:
-        st.pending, st.pending_since = posture, frame.t
-    if posture is None:
-        st.posture = None  # leaving a posture re-arms it
-    elif posture != st.posture and frame.t - st.pending_since >= POSTURE_HOLD[posture]:
-        st.posture = posture
-        _fire_posture(posture, synth)
+    step_posture(frame, st, synth)
 
     # Playing implies wanting sound. Bending the index past the posture
     # threshold always re-opens the gate, so an accidental deactivate can

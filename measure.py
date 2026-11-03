@@ -166,6 +166,56 @@ def gesture_rejection():
 # --------------------------------------------------------------------------
 # 2. Response time
 # --------------------------------------------------------------------------
+def three_sensor():
+    """The branch's own question: what one hand loses with a single sensor.
+
+    Point needs the two fingers to disagree, so it cannot survive. Fist and
+    open can, but the one remaining finger is also a continuous control, and
+    separating "using it" from "meaning a posture" is the whole difficulty.
+    """
+    rng = np.random.default_rng(11)
+    print("\n1b. THREE SENSORS — one hand with a single flex channel")
+
+    def trial(frames):
+        with quiet():
+            synth, fired, original = watcher()
+            st = mapping.HandState()
+            t = 0.0
+            for f in frames:
+                mapping.apply(SensorFrame(t=t, flex=f, flex2=None), synth, st)
+                t += 1.0 / RATE
+            mapping._fire_posture = original
+        return fired
+
+    def noisy(v):
+        return float(np.clip(v + rng.normal(0, FLEX_NOISE), 0, 1))
+
+    def held(target, secs):
+        return [noisy(target) for _ in range(int(secs * RATE))]
+
+    def ramp(a, b, secs):
+        n = int(secs * RATE)
+        return [noisy(a + (b - a) * (i + 1) / n) for i in range(n)]
+
+    cases = {
+        "deliberate fist":      ramp(0.45, 0.97, 0.25) + held(0.97, 1.3) + ramp(0.97, 0.45, 0.25),
+        "deliberate open":      ramp(0.45, 0.05, 0.25) + held(0.05, 1.4) + ramp(0.05, 0.45, 0.25),
+        "sweeping the control": [noisy(0.5 - 0.5 * np.cos(2 * np.pi * i / (1.5 * RATE)))
+                                 for i in range(int(3.0 * RATE))],
+        "parked at maximum":    held(0.97, 3.0),
+    }
+    want = {"deliberate fist": "fist", "deliberate open": "open"}
+    print(f"   {'case':<24}{'fires':>10}{'wanted':>10}")
+    for name, frames in cases.items():
+        hits = sum(1 for _ in range(TRIALS) if trial(frames))
+        tag = want.get(name, "nothing")
+        print(f"   {name:<24}{hits:>7}/{TRIALS}{tag:>10}")
+    print("   point is unavailable: it is the two fingers disagreeing.")
+    print("   Parking a control at maximum reads as a fist. That is the")
+    print("   price of one finger doing two jobs, and it is why the fourth")
+    print("   sensor is worth fitting where there is room for it.")
+
+
 def response_time():
     """How long from a gesture value changing to the sound following it.
 
@@ -263,6 +313,7 @@ if __name__ == "__main__":
     print("=" * 62 + "\n")
     acc = gesture_recognition()
     clean = gesture_rejection()
+    three_sensor()
     lat = response_time()
     miss = stability()
     print("\n" + "=" * 62)
