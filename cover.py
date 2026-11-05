@@ -251,31 +251,60 @@ def _env(n: int, attack: float, release: float) -> np.ndarray:
     return e
 
 
-def render_backing(score: dict) -> np.ndarray:
-    """The vamp: the bass pulse as measured, and a pad on each chord block.
+def _close_loop(out: np.ndarray, n: int) -> np.ndarray:
+    """Fold a part's overhanging release back round the loop.
 
-    Loops seamlessly, because it is going into the loop buffer and a seam
-    once a bar is worse than no backing at all. The length is rounded to a
-    whole number of pulses and the tail is folded back over the head.
+    Everything here is going into the loop buffer, and a release that is
+    simply cut at the end puts a seam in once a bar, which is worse than no
+    backing at all.
     """
-    secs = score["seconds"]
-    n = int(secs * SAMPLE_RATE)
-    out = np.zeros(n + SAMPLE_RATE)
+    tail = out[n:]
+    out = out[:n].copy()
+    out[:len(tail)] += tail
+    return out
 
+
+def render_parts(score: dict) -> dict[str, np.ndarray]:
+    """The vamp, as separate parts rather than one mix.
+
+    Separate on purpose. The synth already mutes, solos and deletes layers
+    one at a time, and a backing delivered as a single wav can only be taken
+    out whole — so covering a piece would have been the one place in the
+    instrument where that did not work. As three parts, the bass can drop
+    out for a verse, or the chords can be soloed to hear the changes, with
+    the gestures and the panel that are already there.
+
+    All parts are the same length, which is what lets the synth stack them:
+    the first layer fixes the loop length and the rest wrap into it.
+    """
+    n = int(score["seconds"] * SAMPLE_RATE)
+    pad_room = n + SAMPLE_RATE          # room for the last release to ring
+    parts: dict[str, np.ndarray] = {}
+
+    bass = np.zeros(pad_room)
     for at, midi, dur in score["bass"]:
         i = int(at * SAMPLE_RATE)
         ln = int(min(dur, score["pulse"] * 0.9) * SAMPLE_RATE)
         hz = 440.0 * 2.0 ** ((midi - 69) / 12.0)
-        out[i:i + ln] += 0.55 * _saw(hz, ln, detune=6.0) * _env(ln, 0.004, 0.05)
+        bass[i:i + ln] += 0.55 * _saw(hz, ln, detune=6.0) * _env(ln, 0.004, 0.05)
+    parts["bass"] = _close_loop(bass, n)
 
+    chords = np.zeros(pad_room)
     for b in score["blocks"]:
         i = int(b["at"] * SAMPLE_RATE)
-        ln = int((b["secs"]) * SAMPLE_RATE)
+        ln = int(b["secs"] * SAMPLE_RATE)
         pad = np.zeros(ln)
         for midi in b["voiced"]:
             hz = 440.0 * 2.0 ** ((midi - 69) / 12.0)
             pad += _saw(hz, ln, detune=11.0)
-        out[i:i + ln] += 0.1 * pad / max(len(b["voiced"]), 1) * _env(ln, 0.08, 0.12)
+        # Level matters more here than it looks. At a third of this the
+        # chords were present but taking them out was inaudible — measured
+        # at 0.5 dB — which made a layer you could mute and not hear, the
+        # one thing a layer must not be. The chord changes are the reason
+        # this vamp is interesting; they are mixed to be heard leaving.
+        chords[i:i + ln] += (0.3 * pad / max(len(b["voiced"]), 1)
+                             * _env(ln, 0.08, 0.12))
+    parts["chords"] = _close_loop(chords, n)
 
     # A pedal tone, if the passage has one. Held notes read as *sustain*
     # rather than as a part, so leaving it out cost the vamp its drone: the
@@ -283,13 +312,21 @@ def render_backing(score: dict) -> np.ndarray:
     # than like the record.
     if score.get("pedal") is not None:
         hz = 440.0 * 2.0 ** ((score["pedal"] - 69) / 12.0)
-        out[:n] += 0.09 * _saw(hz, n, detune=14.0) * _env(n, 0.3, 0.3)
+        parts["pedal"] = 0.14 * _saw(hz, n, detune=14.0) * _env(n, 0.3, 0.3)
 
-    tail = out[n:]
-    out = out[:n].copy()
-    out[:len(tail)] += tail           # fold the release back round the loop
-    peak = float(np.abs(out).max())
-    return out / peak * 0.7 if peak > 1e-6 else out
+    # Scaled together, by the loudest of them, so muting one does not change
+    # how loud the others are.
+    peak = max((float(np.abs(p).max()) for p in parts.values()), default=0.0)
+    if peak > 1e-6:
+        for k in parts:
+            parts[k] = parts[k] / peak * 0.7
+    return parts
+
+
+def render_backing(score: dict) -> np.ndarray:
+    """The whole vamp as one buffer, for anyone who just wants to hear it."""
+    parts = render_parts(score)
+    return sum(parts.values()) if parts else np.zeros(1)
 
 
 def write_midi(score: dict, path: pathlib.Path) -> bool:
@@ -409,27 +446,29 @@ def transcribe(x: np.ndarray, rate: int, name: str, start: float,
     }
 
 
+def _read_wav(path: pathlib.Path) -> np.ndarray:
+    try:
+        import soundfile as sf
+        return sf.read(str(path), dtype="float64", always_2d=True)[0].mean(axis=1)
+    except ImportError:
+        import wave
+        with wave.open(str(path), "rb") as w:
+            raw = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
+        return raw.astype(np.float64) / 32768.0
+
+
 def load(path: str) -> dict:
-    """Read a score written earlier, and the backing beside it."""
+    """Read a score written earlier, and the parts rendered beside it."""
     p = pathlib.Path(path).expanduser()
     if not p.exists():
         raise FileNotFoundError(f"no such cover: {p}")
     score = json.loads(p.read_text())
-    wav = p.parent / (score.get("backing") or "")
-    if wav.is_file():
-        try:
-            import soundfile as sf
-            score["_backing"] = sf.read(str(wav), dtype="float64",
-                                        always_2d=True)[0].mean(axis=1)
-        except ImportError:
-            import wave
-            with wave.open(str(wav), "rb") as w:
-                raw = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
-            score["_backing"] = raw.astype(np.float64) / 32768.0
-    else:
-        # The score has everything needed to make it again, so a missing or
-        # moved wav is not worth failing over.
-        score["_backing"] = render_backing(score)
+    files = score.get("parts") or {}
+    parts = {name: _read_wav(p.parent / f)
+             for name, f in files.items() if (p.parent / f).is_file()}
+    # The score holds everything needed to make them again, so parts that
+    # were moved, deleted or never written are not worth failing over.
+    score["_parts"] = parts if len(parts) == len(files) and parts else render_parts(score)
     return score
 
 
@@ -447,14 +486,31 @@ def install(score: dict, synth, hand, mapping_mod) -> None:
         (score["name"], score["instrument"], score["scale"], False, False))
     hand.scene = len(mapping_mod.SCENES) - 1
     mapping_mod.apply_scene(synth, hand, announce=False)
-    synth.set_loop(score["_backing"], SAMPLE_RATE, label=f"{score['name']} vamp")
+
+    # One layer per part, so the vamp can be taken apart while it plays.
+    # set_loop clears the stack and installs the first, add_track stacks the
+    # rest on top at the same length.
+    parts = score["_parts"]
+    first = True
+    for name in ("bass", "chords", "pedal"):
+        if name not in parts:
+            continue
+        if first:
+            synth.set_loop(parts[name], SAMPLE_RATE, label=name)
+            first = False
+        else:
+            synth.add_track(parts[name], name)
     synth.loop_on = True
     # The backing is there to play over, so the instrument stays up: a song
     # loaded with --song mutes it, because there you are playing the record.
     synth.mute_instrument(False)
     print("\n" + chart(score))
-    print(f"\n  [the vamp is looping; the {score['instrument']} is in your hand,"
-          f"\n   locked to the {score['scale']} scale — tilt to pick notes]\n")
+    print(f"\n  [the vamp is looping as {len(synth.tracks_state())} layers — "
+          f"{synth.layer_summary()}"
+          f"\n   mute or solo any of them from the Layers panel, or with a "
+          f"gesture;"
+          f"\n   the {score['instrument']} is in your hand, locked to the "
+          f"{score['scale']} scale]\n")
 
 
 def main() -> None:
@@ -479,27 +535,37 @@ def main() -> None:
     out.mkdir(exist_ok=True)
     slug = "".join(c.lower() if c.isalnum() else "-" for c in args.name).strip("-")
     jpath = out / f"{slug}.json"
-    wpath = out / f"{slug}-backing.wav"
     mpath = out / f"{slug}-lead.mid"
 
-    backing = render_backing(score)
-    try:
-        import soundfile as sf
-        sf.write(str(wpath), backing.astype(np.float32), SAMPLE_RATE)
-    except ImportError:
-        import wave
-        with wave.open(str(wpath), "wb") as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(SAMPLE_RATE)
-            w.writeframes((np.clip(backing, -1, 1) * 32767).astype("<i2").tobytes())
-    score["backing"] = wpath.name
+    def write_wav(path: pathlib.Path, data: np.ndarray) -> None:
+        try:
+            import soundfile as sf
+            sf.write(str(path), data.astype(np.float32), SAMPLE_RATE)
+        except ImportError:
+            import wave
+            with wave.open(str(path), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(SAMPLE_RATE)
+                w.writeframes(
+                    (np.clip(data, -1, 1) * 32767).astype("<i2").tobytes())
+
+    parts = render_parts(score)
+    score["parts"] = {}
+    for name, data in parts.items():
+        wpath = out / f"{slug}-{name}.wav"
+        write_wav(wpath, data)
+        score["parts"][name] = wpath.name
+    # The mix too, for listening to the vamp without starting the instrument.
+    write_wav(out / f"{slug}-backing.wav", sum(parts.values()))
+    score["backing"] = f"{slug}-backing.wav"
     score["lead_midi"] = mpath.name if write_midi(score, mpath) else None
     jpath.write_text(json.dumps(score, indent=2))
 
     print(chart(score))
     print(f"\n  score    {jpath}")
-    print(f"  backing  {wpath}  ({len(backing) / SAMPLE_RATE:.1f}s, loops)")
+    print(f"  backing  {len(parts)} layers — {', '.join(parts)} "
+          f"({score['seconds']:.1f}s, loops)")
     if score["lead_midi"]:
         print(f"  lead     {mpath}  (reference only — play it yourself)")
     print(f"\n  python main.py --ble --web --cover covers/{slug}.json\n")

@@ -509,6 +509,11 @@
     ]
   ],
   "source": "0e0f14f46c7c9cc7",
+  "parts": {
+    "bass": "posthumous-bass.wav",
+    "chords": "posthumous-chords.wav",
+    "pedal": "posthumous-pedal.wav"
+  },
   "backing": "posthumous-backing.wav",
   "lead_midi": "posthumous-lead.mid"
 }
