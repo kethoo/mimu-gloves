@@ -37,6 +37,10 @@ FILTER_OPEN = 15000.0
 # that the step is inaudible, short enough that a mute still feels immediate.
 MIX_FADE = 0.012
 
+# Above this coefficient the resonant ladder needs its resonance held
+# back to stay stable. Below it, the full range is safe.
+LADDER_A_SAFE = 0.82
+
 GRAIN_LEN = int(0.09 * SAMPLE_RATE)   # granular mode: 90 ms grains...
 GRAIN_HOP = int(0.045 * SAMPLE_RATE)  # ...spawned every 45 ms (2x overlap)
 
@@ -1251,6 +1255,19 @@ class GloveSynth:
             fc = min(max(fc, 30.0), 0.45 * SAMPLE_RATE)
             res = patch["resonance"]
         a = min(1.0 - np.exp(-2.0 * np.pi * fc / SAMPLE_RATE), 0.9)
+        # The feedback runs round a one-sample delay, so the loop gain creeps
+        # past unity as `a` approaches 1 and the ladder tears itself apart:
+        # measured, it diverges to infinity above resonance 2.2 once a
+        # reaches 0.9. A designed patch can ask for exactly that, and the
+        # patch matcher found it on its own within a dozen tries.
+        #
+        # Only designed patches are held back. The seven built-ins were swept
+        # across the whole hand range with this off and none of them can
+        # reach the unstable corner, so clamping them would have cost the
+        # guitar its top end for nothing - and that top end is most of what
+        # makes it a guitar.
+        if patch is not None and a > LADDER_A_SAFE:
+            res = min(res, max(3.6 - 20.0 * (a - LADDER_A_SAFE), 0.5))
         y1, y2, y3, y4 = self._lp
         lp = np.empty(frames)
         for i in range(frames):
