@@ -191,6 +191,24 @@
   .layer button.on { border-color: var(--accent); color: var(--accent); }
   .layer button.kill { color: var(--dim); }
   .layer button.kill:hover { color: #ff8585; border-color: #ff8585; }
+  /* Effects pinned to one layer. The row stays one line until a layer has
+     some, then wraps — a stack of four layers with nothing on them should
+     not be four tall rows. */
+  .layer { flex-wrap: wrap; }
+  .layer .lfx { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .layer .pill { display: inline-flex; align-items: center; gap: 5px;
+                 padding: 2px 4px 2px 9px; border-radius: 999px;
+                 font-size: 11.5px; letter-spacing: .01em;
+                 color: var(--accent); background: var(--track);
+                 border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent); }
+  .layer .pill span { cursor: pointer; width: 15px; height: 15px; display: grid;
+                      place-items: center; border-radius: 50%; color: var(--dim);
+                      font-size: 13px; line-height: 1; }
+  .layer .pill span:hover { color: #ff8585; background: rgba(255,133,133,.16); }
+  .layer button.addfx { padding: 3px 9px; font-size: 12px; color: var(--dim); }
+  .layer .fxmenu { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px;
+                   padding-top: 8px; }
+  .layer .fxmenu button { font-size: 11.5px; padding: 3px 10px; }
   .modegrid { display: grid; grid-template-columns: repeat(3, 1fr);
               gap: 0; margin-top: 14px; }
   @media (max-width: 900px) { .modegrid { grid-template-columns: 1fr; } }
@@ -1052,6 +1070,10 @@ function setSongStatus(text, cls) {
   el.className = cls || "";
 }
 
+// Kept in step with layerfx.EFFECTS by hand: six names that change rarely,
+// against sending the same list in every state message twenty times a second.
+const LAYER_FX = ["reverb", "echo", "octave up", "octave down",
+                  "reverse", "darken"];
 const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene", c: "recalibrate", a: "bounce", s: "session", e: "export", f: "freeze", h: "harmony", j: "reverse", k: "pitchlock" };
 const INS = ["saw", "organ", "strings", "bell", "flute", "pluck", "guitar"];
 document.addEventListener("keydown", (e) => {
@@ -2043,7 +2065,25 @@ function render(s) {
       n.className = "lnum"; n.textContent = t.n;
       const name = document.createElement("span");
       name.className = "lname"; name.append(t.label);
-      row.append(n, name);
+      // What has been rendered into this layer, each with its own way off.
+      const fx = document.createElement("div");
+      fx.className = "lfx";
+      (t.chain || []).forEach((name_, i) => {
+        const pill = document.createElement("b");
+        pill.className = "pill";
+        pill.append(name_);
+        const kill = document.createElement("span");
+        kill.textContent = "\u00d7";
+        kill.title = "take " + name_ + " off this layer";
+        kill.onclick = () => sendEvent(`layerfx:${t.id}:del:${i}`);
+        pill.append(kill);
+        fx.append(pill);
+      });
+      const add = document.createElement("button");
+      add.className = "addfx";
+      add.textContent = "+ fx";
+      add.title = "put an effect on this layer alone";
+      row.append(n, name, fx, add);
       // FX is lit when the layer is NOT being effected, because that is the
       // state worth spotting: everything goes through the chain unless you
       // say otherwise, so the odd one out is the dry one.
@@ -2064,6 +2104,24 @@ function render(s) {
       x.className = "kill"; x.textContent = "\u00d7"; x.title = "remove this layer";
       x.onclick = () => sendEvent(`track:delete:${t.id}`);
       row.append(x);
+      // The list of what can be added, opened by + fx and closed by picking
+      // one. Built here rather than fetched: these are the effects that can
+      // be rendered into a layer, and they are LAYER_FX in layerfx.py.
+      const menu = document.createElement("div");
+      menu.className = "fxmenu";
+      menu.hidden = true;
+      for (const name_ of LAYER_FX) {
+        const b = document.createElement("button");
+        b.textContent = name_;
+        b.disabled = (t.chain || []).includes(name_);
+        b.onclick = () => {
+          sendEvent(`layerfx:${t.id}:add:${name_}`);
+          menu.hidden = true;
+        };
+        menu.append(b);
+      }
+      add.onclick = () => { menu.hidden = !menu.hidden; };
+      row.append(menu);
       return row;
     }));
   }

@@ -978,8 +978,13 @@ class GloveSynth:
         # moved into that slot. That is how a freshly bounced take ended up
         # muted by a click meant for a layer that no longer existed.
         self._track_seq += 1
+        # `src` is the recording as it arrived and is never written to
+        # again; `buf` is that source with the layer's own effect chain
+        # rendered into it. Keeping both is what lets an effect be taken
+        # off: the chain is simply rendered again without it.
         self._tracks.append(
-            {"buf": buf, "muted": False, "solo": False, "level": 1.0,
+            {"buf": buf, "src": buf.copy(), "chain": [],
+             "muted": False, "solo": False, "level": 1.0,
              "fx": True, "label": label, "id": self._track_seq})
         self._remix()
         self.loop_on = True
@@ -1013,6 +1018,46 @@ class GloveSynth:
         self._remix()
         print(f"\n[layers: {self.layer_summary()}]")
 
+    def layer_fx(self, ident: int, action: str, value: str | int) -> None:
+        """Add an effect to one layer, or take one off it.
+
+        Rendered here and not in the callback: the layer's samples are
+        rebuilt once, now, so playing it costs exactly what it cost before.
+        A layer with four effects on it is no more expensive than a bare
+        one, which is the whole reason these are a property of the layer
+        rather than another thing the hand is holding.
+        """
+        import layerfx
+
+        idx = next((i for i, tr in enumerate(self._tracks)
+                    if tr["id"] == ident), None)
+        if idx is None:
+            print(f"\n[layer {ident} is gone — nothing to change]")
+            return
+        t = self._tracks[idx]
+        chain = list(t.get("chain", []))
+        if action == "add":
+            if value not in layerfx.EFFECTS:
+                print(f"\n[no such effect: {value}]")
+                return
+            if value in chain:
+                print(f"\n[{t['label']} already has {value}]")
+                return
+            chain.append(str(value))
+        elif action == "del":
+            try:
+                chain.pop(int(value))
+            except (ValueError, IndexError):
+                return
+        elif action == "clear":
+            chain = []
+        else:
+            return
+        t["chain"] = chain
+        t["buf"] = layerfx.render(t["src"], chain)
+        self._remix()
+        print(f"\n[{t['label']}: {' + '.join(chain) if chain else 'clean'}]")
+
     def layer_summary(self) -> str:
         if not self._tracks:
             return "none"
@@ -1021,6 +1066,7 @@ class GloveSynth:
             + ("" if self._audible(t) else " (out)")
             + (" SOLO" if t["solo"] else "")
             + ("" if t.get("fx", True) else " dry")
+            + (" [" + "+".join(t["chain"]) + "]" if t.get("chain") else "")
             for i, t in enumerate(self._tracks))
 
     def tracks_state(self) -> list:
@@ -1030,7 +1076,8 @@ class GloveSynth:
         # first is a position and gets reused, the second never does.
         return [{"n": i + 1, "id": t["id"], "label": t["label"],
                  "muted": t["muted"], "solo": t["solo"],
-                 "fx": t.get("fx", True), "audible": self._audible(t)}
+                 "fx": t.get("fx", True), "chain": list(t.get("chain", ())),
+                 "audible": self._audible(t)}
                 for i, t in enumerate(self._tracks)]
 
     def set_loop(self, samples, rate: int, label: str = "glove take") -> None:
