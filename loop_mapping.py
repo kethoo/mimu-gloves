@@ -152,7 +152,15 @@ def apply(frame: SensorFrame, synth: GloveSynth,
         synth.target_voice_pitch = 2.0 ** (RATE_OCTAVES * u)
     else:
         synth.target_rate = 2.0 ** (RATE_OCTAVES * u)
-        synth.target_voice_pitch = synth.target_rate
+        # Varispeed already moves the pitch of a loop played at this rate, so
+        # the shifter must stay out of it. It used to get the same ratio, which
+        # transposed the loop twice (1.59x came out at 2.5x) and routed it
+        # through the shifter's buffer, audibly slower than the left hand.
+        # Granular ignores the rate and the live mic has none, so those two
+        # still pitch through the shifter.
+        at_rate = (synth.loop_on and synth.loop_seconds > 0
+                   and synth.voice_from_loop and not synth.granular_on)
+        synth.target_voice_pitch = 1.0 if at_rate else synth.target_rate
     # The preset's offset rides on top of whatever tilt is asking for, so a
     # preset colours the hand rather than overriding it. It was being stored
     # and never read, which left Chipmunk and Demon - the two presets whose
