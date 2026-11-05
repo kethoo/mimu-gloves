@@ -33,6 +33,10 @@ SEEK_FADE = 0.006          # seconds of fade-in after a jump, to kill the click
 # Above this the voice lowpass is bypassed rather than run wide open.
 FILTER_OPEN = 15000.0
 
+# How long to crossfade when a layer joins or leaves the mix. Long enough
+# that the step is inaudible, short enough that a mute still feels immediate.
+MIX_FADE = 0.012
+
 GRAIN_LEN = int(0.09 * SAMPLE_RATE)   # granular mode: 90 ms grains...
 GRAIN_HOP = int(0.045 * SAMPLE_RATE)  # ...spawned every 45 ms (2x overlap)
 
@@ -319,6 +323,8 @@ class GloveSynth:
         # knows the difference — every mode still reads `_loop_buf` — and the
         # audio callback does no extra work at all.
         self._tracks: list[dict] = []
+        self._mix_old = None       # the mix being faded out of, if any
+        self._mix_fade = 1.0       # 1.0 means no crossfade in progress
 
         # Bounce: write what you are hearing back into the recording. Until
         # this existed a gesture only ever shaped playback, so every effect
@@ -862,6 +868,7 @@ class GloveSynth:
         is built whole and then swapped in, so the callback is never reading
         one that is half written.
         """
+        prev = self._loop_buf
         live = [t for t in self._tracks if self._audible(t)]
         if not self._tracks:
             self.loop_on = False
@@ -876,7 +883,18 @@ class GloveSynth:
         if peak > 0.9:
             mix *= 0.9 / peak
         self._loop_buf = mix
-        self._grains = []          # grains point into the old array
+        # Grains are not touched. Each one holds the mix it was drawn from,
+        # so the ones in flight finish on the old sum and fade out through
+        # their own window. Cutting them was measured at four times any
+        # other jump in the block.
+        # Taking a layer out changes the waveform under the playhead, which
+        # is a step discontinuity and so a click: measured at seven times any
+        # other jump in the block. Borrowing the seek fade made it worse,
+        # because that ramps up from silence and the drop to silence is
+        # itself a bigger step. The old mix is kept instead and the two are
+        # crossfaded, which is the only version with nothing to hear.
+        if prev is not None and len(prev) == len(mix):
+            self._mix_old, self._mix_fade = prev, 0.0
 
     def add_track(self, samples: np.ndarray, label: str, at: float = 0.0) -> None:
         """Add a layer. The first one sets the loop's length; later ones wrap
@@ -1164,6 +1182,16 @@ class GloveSynth:
                     i1 = (i0 + 1) % len(buf)
                     frac = idx - i0
                     voice = buf[i0] * (1.0 - frac) + buf[i1] * frac
+                    if self._mix_fade < 1.0 and self._mix_old is not None:
+                        old = (self._mix_old[i0] * (1.0 - frac)
+                               + self._mix_old[i1] * frac)
+                        step = 1.0 / max(MIX_FADE * SAMPLE_RATE, 1.0)
+                        xr = np.minimum(
+                            self._mix_fade + step * np.arange(frames), 1.0)
+                        voice = old * (1.0 - xr) + voice * xr
+                        self._mix_fade = float(xr[-1])
+                        if self._mix_fade >= 1.0:
+                            self._mix_old = None
                     if self._seek_fade < 1.0:
                         step = 1.0 / max(SEEK_FADE * SAMPLE_RATE, 1.0)
                         ramp = np.minimum(
@@ -1827,10 +1855,10 @@ class GloveSynth:
             out += self._grain_voice(buf, frames, ratio) * gain
         # Aged once, after every voice has read them, not once per voice.
         alive = []
-        for start, age in self._grains:
+        for start, age, gbuf in self._grains:
             n = min(frames, GRAIN_LEN - age)
             if age + n < GRAIN_LEN:
-                alive.append([start, age + n])
+                alive.append([start, age + n, gbuf])
         self._grains = alive
         return out
 
@@ -1853,12 +1881,17 @@ class GloveSynth:
         while self._grain_timer <= 0 and span > 0:
             jitter = self._rng.uniform(-0.03, 0.03) * SAMPLE_RATE
             start = int(np.clip(centre + jitter, 0, span))
-            self._grains.append([start, 0])
+            self._grains.append([start, 0, buf])
             self._grain_timer += GRAIN_HOP
 
-    def _grain_voice(self, buf: np.ndarray, frames: int,
+    def _grain_voice(self, _buf: np.ndarray, frames: int,
                      ratio: float) -> np.ndarray:
         """The live grains, read at `ratio` times their recorded pitch.
+
+        Each grain reads the mix it was spawned against, not whatever the
+        mix is now. Muting a layer therefore never cuts a grain in half:
+        the ones already in flight finish on the old sum and fade out
+        through their own window, and only the next ones hear the change.
 
         The window is indexed by the grain's age and the sample by age times
         the ratio. That is the whole of pitch shifting: where the grain sits
@@ -1866,7 +1899,7 @@ class GloveSynth:
         cloud keeps its rhythm while the note moves.
         """
         out = np.zeros(frames)
-        for start, age in self._grains:
+        for start, age, buf in self._grains:
             n = min(frames, GRAIN_LEN - age)
             if n <= 0:
                 continue
