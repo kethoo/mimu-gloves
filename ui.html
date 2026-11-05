@@ -695,8 +695,9 @@
       index = volume, middle = vibrato. Fist and open hand are sound on and
       off, point is the next instrument, a wrist flick is a drum hit.<br>
       <b>Loop hand:</b> roll = scrub, tilt = loop speed, yaw = its own pan,
-      index = live/loop blend, middle = reverb. Fist freezes, open releases,
-      point cycles normal → granular → slices, a flick fires a slice.
+      <span id="loopfingers">index = live/loop blend, middle = reverb. Fist
+      freezes, open releases, point cycles normal → granular → slices,</span>
+      a flick fires a slice.
     </div>
   </div>
 
@@ -1736,6 +1737,10 @@ function handSVG(h, mirror, colour){
   const curl = v => { const t = Math.max(0, Math.min(1, v==null?0:v));
                       return {len: 36-23*t, rot: t*70, t}; };
   const idx=curl(h.flex), mid=curl(h.flex2);
+  // A finger with no sensor on it moves with the fingers that have none,
+  // not as a lit finger stuck straight, which reads as a dead sensor.
+  const fitted = h.fingers || ["index","middle"];
+  const hasIdx = fitted.includes("index"), hasMid = fitted.includes("middle");
   const rest=curl(h.posture==="fist"?0.95:(h.posture==="open"?0.02:0.15));
   const skin = h.linked ? cssVar("--skin") : cssVar("--skin-off");
   const f=(x,c,live)=>`<g transform="translate(${x},${KN})"><g transform="rotate(${-c.rot})">
@@ -1759,7 +1764,7 @@ function handSVG(h, mirror, colour){
            pinky. The sensors are taped to the index and middle, so those
            are the two that bend; animating the middle pair made a bend
            look like it was happening on the wrong fingers. -->
-      ${f(34,idx,true)}${f(56,mid,true)}${f(78,rest,false)}${f(100,rest,false)}
+      ${hasIdx?f(34,idx,true):f(34,rest,false)}${hasMid?f(56,mid,true):f(56,rest,false)}${f(78,rest,false)}${f(100,rest,false)}
       <g transform="translate(28,100) rotate(${-34+rest.rot*0.45})">
         <rect x="-7.9" y="-32" width="15.8" height="42" rx="7.9" fill="${skin}"/></g>
       <rect x="26" y="61" width="80" height="61" rx="19" fill="${skin}"/>
@@ -1797,7 +1802,9 @@ function gauges(h){
   </div>`;
 }
 function postures(h){
-  const list=[["fist","Fist"],["open","Open hand"],["point","Point"]];
+  // Point is two fingers disagreeing, so one sensor cannot make it.
+  const list=[["fist","Fist"],["open","Open hand"],["point","Point"]]
+    .filter(([k]) => k !== "point" || !h.fingers || h.fingers.length > 1);
   return `<div class="posts">
     <div class="chiprow">${list.map(([k,label])=>{
       const on = h.posture===k;
@@ -1809,10 +1816,16 @@ function postures(h){
   </div>`;
 }
 
-// Both gloves have two flex sensors, so both report them. A channel reads
-// "—" until it has swung far enough to calibrate, and null means the
-// firmware is not sending that channel at all — an older build sends one.
+// A channel reads "—" until it has swung far enough to calibrate, and null
+// means the firmware is not sending that channel at all. The one-sensor glove
+// names its finger and shows what the sensor measures: 7.9-8.8k is right.
 function flexBadges(h){
+  if (h.fingers && h.fingers.length === 1) {
+    const k = h.middle_kohm;
+    const inRange = k != null && k >= 7 && k <= 10;
+    const label = k == null ? "middle —" : `middle ${k.toFixed(1)} k\u03a9`;
+    return [[label, h.flex2 != null && inRange ? "on" : ""]];
+  }
   const one = (v, n) => v == null ? [`flex${n} —`, ""] : [`flex${n} ok`, "on"];
   return [one(h.flex, 1), one(h.flex2, 2)];
 }
@@ -1884,7 +1897,8 @@ const LOOP_OPTS = {
   rows: h => [["scrub", h.scrub||0, Math.round((h.scrub||0)*100)+"%"],
               ["speed", ((Math.log2(h.speed||1)+1)/2), (h.speed||1).toFixed(2)+"x"],
               ["reverb", h.reverb||0, Math.round((h.reverb||0)*100)+"%"],
-              ["blend", h.blend||0, Math.round((h.blend||0)*100)+"%"]],
+              ["blend", h.blend||0, h.fingers && !h.fingers.includes("index")
+                 ? "fixed" : Math.round((h.blend||0)*100)+"%"]],
   badges: h => [[h.preset, "on"], [h.mode, h.mode!=="normal"?"on":""],
                 ...(h.delay?[["delay","on"]]:[]), ...(h.frozen?[["FROZEN","hot"]]:[]),
                 ...flexBadges(h)],
@@ -1919,6 +1933,10 @@ function renderPanel(s){
            {...LOOP_OPTS, mirror: !liveLeft,
             badges: liveLeft ? LOOP_OPTS.badges : onLeft(LOOP_OPTS.badges),
             title: ICON_LOOP + `<span>Loop hand · ${liveLeft?"right":"left"}</span>`});
+  if (s.loop_hand.fingers && s.loop_hand.fingers.length === 1)
+    $("loopfingers").textContent = "middle = reverb, and the blend stays fixed "
+      + "because this glove has one sensor. Bend it fully and hold to freeze, "
+      + "straighten and hold to release, change mode with g, b or h,";
   const t = $("tog");
   t.className = "tog" + (s.combo ? " on" : "");
   const wv = s.width == null ? 1 : s.width;

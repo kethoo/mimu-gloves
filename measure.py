@@ -30,6 +30,7 @@ def quiet():
     with contextlib.redirect_stdout(buf):
         yield
 
+import loop_mapping
 import mapping
 import synth as S
 from sensors import SensorFrame
@@ -166,29 +167,34 @@ def gesture_rejection():
 # --------------------------------------------------------------------------
 # 2. Response time
 # --------------------------------------------------------------------------
-def three_sensor():
-    """The branch's own question: what one hand loses with a single sensor.
+def three_sensor(noise=FLEX_NOISE):
+    """The branch's own question: what the right hand can do with one sensor.
 
-    Point needs the two fingers to disagree, so it cannot survive. Fist and
-    open can, but the one remaining finger is also a continuous control, and
-    separating "using it" from "meaning a posture" is the whole difficulty.
+    Run through the real loop-hand mapping with the middle finger reporting
+    and the index absent, which is how that glove is built. Point needs two
+    fingers to disagree, so it cannot survive. Fist and open can, but the one
+    finger is also the reverb control, and separating "using it" from "meaning
+    a posture" is the whole difficulty.
     """
     rng = np.random.default_rng(11)
-    print("\n1b. THREE SENSORS — one hand with a single flex channel")
+    print(f"\n1b. RIGHT HAND — middle finger only, noise sigma = {noise:.0%} of range")
 
     def trial(frames):
         with quiet():
-            synth, fired, original = watcher()
-            st = mapping.HandState()
+            synth = S.GloveSynth(no_mic=True, open_stream=False)
+            fired = []
+            original = loop_mapping._fire_posture
+            loop_mapping._fire_posture = lambda posture, s: fired.append(posture)
+            st = loop_mapping.LoopState()
             t = 0.0
             for f in frames:
-                mapping.apply(SensorFrame(t=t, flex=f, flex2=None), synth, st)
+                loop_mapping.apply(SensorFrame(t=t, flex=None, flex2=f), synth, st)
                 t += 1.0 / RATE
-            mapping._fire_posture = original
+            loop_mapping._fire_posture = original
         return fired
 
     def noisy(v):
-        return float(np.clip(v + rng.normal(0, FLEX_NOISE), 0, 1))
+        return float(np.clip(v + rng.normal(0, noise), 0, 1))
 
     def held(target, secs):
         return [noisy(target) for _ in range(int(secs * RATE))]
@@ -205,15 +211,16 @@ def three_sensor():
         "parked at maximum":    held(0.97, 3.0),
     }
     want = {"deliberate fist": "fist", "deliberate open": "open"}
+    # The first two must fire the posture named, not merely fire something.
     print(f"   {'case':<24}{'fires':>10}{'wanted':>10}")
     for name, frames in cases.items():
-        hits = sum(1 for _ in range(TRIALS) if trial(frames))
         tag = want.get(name, "nothing")
+        hits = sum(1 for _ in range(TRIALS)
+                   if (tag in trial(frames) if tag != "nothing" else trial(frames)))
         print(f"   {name:<24}{hits:>7}/{TRIALS}{tag:>10}")
     print("   point is unavailable: it is the two fingers disagreeing.")
-    print("   Parking a control at maximum reads as a fist. That is the")
-    print("   price of one finger doing two jobs, and it is why the fourth")
-    print("   sensor is worth fitting where there is room for it.")
+    print("   Parking the reverb at maximum reads as a fist, which freezes.")
+    print("   That is the price of one finger doing two jobs.")
 
 
 def response_time():
@@ -314,6 +321,9 @@ if __name__ == "__main__":
     acc = gesture_recognition()
     clean = gesture_rejection()
     three_sensor()
+    # The sensor swings about 101 counts, so the 13 counts README quotes for
+    # noise is 13% of its range, against the 6% of the four-sensor gloves.
+    three_sensor(noise=0.13)
     lat = response_time()
     miss = stability()
     print("\n" + "=" * 62)

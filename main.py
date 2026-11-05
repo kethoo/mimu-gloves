@@ -400,6 +400,15 @@ def _pending(st, now):
     return st.pending, min((now - st.pending_since) / hold, 1.0)
 
 
+def _middle_kohm(frame, src) -> float | None:
+    if not getattr(src, "solo_middle", False):
+        return None
+    from ble_receiver import flex_kohm
+
+    k = flex_kohm(frame.flex2_raw)
+    return None if k is None else round(k, 1)
+
+
 def _hand_state(frame, src, posture, extra, st=None) -> dict:
     """One glove's row in the panel. `src` is the BLE source when there is
     one, so the panel can tell 'no link' from 'linked but sensor stalled' —
@@ -424,6 +433,11 @@ def _hand_state(frame, src, posture, extra, st=None) -> dict:
         "roll": frame.roll, "pitch": frame.pitch, "yaw": frame.yaw,
         "motion": frame.motion,
         "flex": frame.flex, "flex2": frame.flex2,
+        # Which fingers this glove has sensors on, so the drawing bends only
+        # those, and what the middle one measures right now, in ohms: that
+        # answers "is it wired right" without a multimeter.
+        "fingers": list(getattr(src, "flex_fingers", ("index", "middle"))),
+        "middle_kohm": _middle_kohm(frame, src),
         "posture": posture,
     }
     state.update(extra)
@@ -511,6 +525,7 @@ def main() -> None:
             voice_source = BleGloveSource(
                 loop_name, tag="V:", label="loop glove", managed=True,
                 flip=flip_which == "loop", swap_flex=swap_flex,
+                solo_middle="--loop-flex-both" not in sys.argv,
             )
             print("Connecting to BOTH gloves over BLE...")
             print(f"  live glove = {live_side.upper()} hand, "
@@ -519,7 +534,11 @@ def main() -> None:
                   + ("  [--flip-hand none|live|loop to change]"
                      if flip_which != "none" else ""))
         else:
-            glove = BleGloveSource(live_name, label="glove")
+            # The right glove on its own is still the one-sensor glove.
+            glove = BleGloveSource(
+                live_name, label="glove",
+                solo_middle=(live_name == loop_name
+                             and "--loop-flex-both" not in sys.argv))
             print(f"Connecting to '{live_name}' over BLE...")
             # Without this the loop hand silently falls back to the browser
             # and the panel just says "simulated", which reads as a fault

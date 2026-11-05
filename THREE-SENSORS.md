@@ -90,15 +90,35 @@ The four-sensor path is unchanged and still measures 90 of 90.
 
 ---
 
-## Which finger to keep
+## This build
 
-Fit the surviving sensor to the **index**. It carries the blend, which is the
-more musical of the two controls, and reverb has somewhere to fall back to —
-the six presets already set it, so the glove's button still reaches it.
+The right glove's one sensor is on the **middle finger** and measures
+**7.9k straight, 8.8k bent**. The left glove keeps both of its sensors.
 
-If the middle finger is the one fitted instead, nothing breaks: the blend
-falls back to a fixed 0.6 and reverb becomes continuous. The code does not
-care which of the two is reporting.
+| Right hand | |
+| --- | --- |
+| Middle bend | reverb |
+| Blend | fixed at 0.6, since the index has no sensor |
+| Bent fully and held | fist: freeze |
+| Straight and held | open: release |
+| Change loop mode | `g`, `b`, `h` on the keyboard or panel |
+
+Through the 15k leg of the divider that resistance range is 2682 to 2581
+counts, a swing of about 101. That is too small to wait for the ordinary
+self-calibration, which wants 80 counts before it believes a finger, so the
+channel starts from the known range and needs no bending first.
+
+It does not depend on which pin the sensor landed on: half a second after
+connecting it takes the pin that reads like a sensor and reports it as the
+middle finger. If the reading disagrees with 7.9-8.8k it says so, in ohms, and
+learns the range from the finger instead; `c` does the same on request. A
+reading stuck near 4095 means the 15k resistor to ground is missing or open,
+and nothing in software can make that finger bend.
+
+The panel draws this: only the middle finger curls, Point is gone from that
+hand, and a badge shows what the sensor measures right now.
+
+`--loop-flex-both` puts the right glove back on two sensors.
 
 ---
 
