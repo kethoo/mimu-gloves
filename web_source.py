@@ -100,8 +100,10 @@ class WebGloveSource(GloveSource):
                                        ("op", "name", "patch")}
                     elif kind == "event":
                         name = msg.get("name", "")
-                        if (name in ALLOWED_EVENTS or name.startswith("instrument:")
-                                or name.startswith("track:")):
+                        if (name in ALLOWED_EVENTS
+                                or name.startswith("instrument:")
+                                or name.startswith("track:")
+                                or name.startswith("layerfx:")):
                             tag = "V:" if msg.get("hand") == 2 else ""
                             self.events.append(tag + name)
             finally:

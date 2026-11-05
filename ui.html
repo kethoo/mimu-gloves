@@ -196,19 +196,23 @@
      not be four tall rows. */
   .layer { flex-wrap: wrap; }
   .layer .lfx { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
-  .layer .pill { display: inline-flex; align-items: center; gap: 5px;
-                 padding: 2px 4px 2px 9px; border-radius: 999px;
-                 font-size: 11.5px; letter-spacing: .01em;
-                 color: var(--accent); background: var(--track);
-                 border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent); }
-  .layer .pill span { cursor: pointer; width: 15px; height: 15px; display: grid;
-                      place-items: center; border-radius: 50%; color: var(--dim);
-                      font-size: 13px; line-height: 1; }
-  .layer .pill span:hover { color: #ff8585; background: rgba(255,133,133,.16); }
-  .layer button.addfx { padding: 3px 9px; font-size: 12px; color: var(--dim); }
-  .layer .fxmenu { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px;
-                   padding-top: 8px; }
-  .layer .fxmenu button { font-size: 11.5px; padding: 3px 10px; }
+  /* All six are always on the row. An effect you have not put on this layer
+     is a thin outline; one you have takes its own colour, so a glance down
+     the stack says who is carrying what. Hiding the unused ones behind a
+     menu meant two clicks to reach a thing that fits on the row. */
+  .layer .pill { display: inline-flex; align-items: center; gap: 4px;
+                 padding: 2px 9px; border-radius: 999px; cursor: pointer;
+                 font: inherit; font-size: 11.5px; letter-spacing: .01em;
+                 color: var(--dim); background: transparent;
+                 border: 1px solid var(--line); transition: none; }
+  .layer .pill:hover { color: var(--text); border-color: var(--text); }
+  .layer .pill.on { color: hsl(var(--h) 72% 68%);
+                    border-color: hsl(var(--h) 65% 52%);
+                    background: hsl(var(--h) 60% 50% / 0.17); }
+  .layer .pill.on:hover { color: #ff8585; border-color: #ff8585;
+                          background: rgba(255, 133, 133, 0.14); }
+  .layer .pill.on::after { content: "\00d7"; font-size: 13px; line-height: 1;
+                           opacity: .75; }
   .modegrid { display: grid; grid-template-columns: repeat(3, 1fr);
               gap: 0; margin-top: 14px; }
   @media (max-width: 900px) { .modegrid { grid-template-columns: 1fr; } }
@@ -691,9 +695,11 @@
     <div id="layers"></div>
     <div class="hint" style="margin-top:8px">
       Each take is kept on its own. <b>M</b> drops one out of the mix,
-      <b>S</b> plays it alone, <b>FX</b> takes it off the effects so it
-      plays clean while the rest are shaped, <b>×</b> removes it for good.
-      Bounce flattens them all into one.
+      <b>S</b> plays it alone, <b>FX</b> takes it off the hand's effects so
+      it plays clean while the rest are shaped, <b>×</b> removes it for good.
+      The coloured pills are rendered into that layer and stay with it —
+      click one to put it on, click it again to take it off. Bounce flattens
+      every layer into one.
     </div>
   </div>
 
@@ -1072,8 +1078,10 @@ function setSongStatus(text, cls) {
 
 // Kept in step with layerfx.EFFECTS by hand: six names that change rarely,
 // against sending the same list in every state message twenty times a second.
-const LAYER_FX = ["reverb", "echo", "octave up", "octave down",
-                  "reverse", "darken"];
+// The number is the hue the pill takes when the effect is on, far enough
+// apart that two lit pills on one row are told apart at a glance.
+const LAYER_FX = [["reverb", 190], ["echo", 265], ["octave up", 45],
+                  ["octave down", 18], ["reverse", 320], ["darken", 140]];
 const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene", c: "recalibrate", a: "bounce", s: "session", e: "export", f: "freeze", h: "harmony", j: "reverse", k: "pitchlock" };
 const INS = ["saw", "organ", "strings", "bell", "flute", "pluck", "guitar"];
 document.addEventListener("keydown", (e) => {
@@ -2065,25 +2073,27 @@ function render(s) {
       n.className = "lnum"; n.textContent = t.n;
       const name = document.createElement("span");
       name.className = "lname"; name.append(t.label);
-      // What has been rendered into this layer, each with its own way off.
+      // One pill per effect, lit when this layer is carrying it. Clicking a
+      // lit one takes it off, which is why it grows an x; clicking a dim one
+      // puts it on.
       const fx = document.createElement("div");
       fx.className = "lfx";
-      (t.chain || []).forEach((name_, i) => {
-        const pill = document.createElement("b");
-        pill.className = "pill";
+      const chain = t.chain || [];
+      for (const [name_, hue] of LAYER_FX) {
+        const i = chain.indexOf(name_);
+        const pill = document.createElement("button");
+        pill.className = "pill" + (i >= 0 ? " on" : "");
+        pill.style.setProperty("--h", hue);
         pill.append(name_);
-        const kill = document.createElement("span");
-        kill.textContent = "\u00d7";
-        kill.title = "take " + name_ + " off this layer";
-        kill.onclick = () => sendEvent(`layerfx:${t.id}:del:${i}`);
-        pill.append(kill);
+        pill.title = i >= 0
+          ? "take " + name_ + " off " + t.label
+          : "render " + name_ + " into " + t.label + " alone";
+        pill.onclick = () => sendEvent(i >= 0
+          ? `layerfx:${t.id}:del:${i}`
+          : `layerfx:${t.id}:add:${name_}`);
         fx.append(pill);
-      });
-      const add = document.createElement("button");
-      add.className = "addfx";
-      add.textContent = "+ fx";
-      add.title = "put an effect on this layer alone";
-      row.append(n, name, fx, add);
+      }
+      row.append(n, name, fx);
       // FX is lit when the layer is NOT being effected, because that is the
       // state worth spotting: everything goes through the chain unless you
       // say otherwise, so the odd one out is the dry one.
@@ -2104,24 +2114,6 @@ function render(s) {
       x.className = "kill"; x.textContent = "\u00d7"; x.title = "remove this layer";
       x.onclick = () => sendEvent(`track:delete:${t.id}`);
       row.append(x);
-      // The list of what can be added, opened by + fx and closed by picking
-      // one. Built here rather than fetched: these are the effects that can
-      // be rendered into a layer, and they are LAYER_FX in layerfx.py.
-      const menu = document.createElement("div");
-      menu.className = "fxmenu";
-      menu.hidden = true;
-      for (const name_ of LAYER_FX) {
-        const b = document.createElement("button");
-        b.textContent = name_;
-        b.disabled = (t.chain || []).includes(name_);
-        b.onclick = () => {
-          sendEvent(`layerfx:${t.id}:add:${name_}`);
-          menu.hidden = true;
-        };
-        menu.append(b);
-      }
-      add.onclick = () => { menu.hidden = !menu.hidden; };
-      row.append(menu);
       return row;
     }));
   }
