@@ -33,6 +33,14 @@ SEEK_FADE = 0.006          # seconds of fade-in after a jump, to kill the click
 # Above this the voice lowpass is bypassed rather than run wide open.
 FILTER_OPEN = 15000.0
 
+# How long to crossfade when a layer joins or leaves the mix. Long enough
+# that the step is inaudible, short enough that a mute still feels immediate.
+MIX_FADE = 0.012
+
+# Above this coefficient the resonant ladder needs its resonance held
+# back to stay stable. Below it, the full range is safe.
+LADDER_A_SAFE = 0.82
+
 GRAIN_LEN = int(0.09 * SAMPLE_RATE)   # granular mode: 90 ms grains...
 GRAIN_HOP = int(0.045 * SAMPLE_RATE)  # ...spawned every 45 ms (2x overlap)
 
@@ -95,6 +103,10 @@ VIBRATO_DEPTH = 0.02                  # max pitch swing (+/-2%, ~a third of
 
 PS_BUF = 1 << 16                     # live voice: ring buffer (~1.5 s)
 PS_WIN = 2048                        # pitch-shifter tap window (~46 ms)
+# How close to unity counts as "no shift at all". 0.004 is about 7 cents,
+# well under what anyone hears as a pitch change, and inside it the shifter
+# is faded out: see _pitch_shift for why it cannot be left running there.
+PS_UNITY = 0.004
 
 # ---- voice hand (second glove) ----------------------------------------
 # Schroeder reverb: four parallel combs summed into two series allpasses.
@@ -302,12 +314,32 @@ class GloveSynth:
         self._seek_fade = 1.0       # 0..1 fade-in after a seek
         self.loop_on = False
         self.loop_label = "glove take"   # what the panel calls what is loaded
+        self.take_status = ""            # how the last take ended, for the page
+        self._track_seq = 0              # layer ids, never reused
+        # Layers playing past the effects rather than through them.
+        self._dry_buf: np.ndarray | None = None
+        self._dry_pos = 0.0        # its own playhead: scrubbing the wet
+        self._dry_old = None       # layers must not drag the dry ones with it
+        self._dry_fade = 1.0
         self._loop_buf: np.ndarray | None = None
         self._loop_pos = 0.0
         self._rec_stream: sd.InputStream | None = None
         self._rec_chunks: list[np.ndarray] = []
         self._overdub = False
         self._overdub_from = 0.0  # loop position when the overdub started
+
+        # Layers, kept apart. Overdub used to sum the new take straight into
+        # the buffer, which made a layer unrecoverable the moment it landed:
+        # you could add to a loop but never take anything back out of it.
+        # Each take is its own array now and `_loop_buf` is their mix, so
+        # muting one is a question of leaving it out of that sum.
+        #
+        # The mix is cached rather than built per block. Nothing downstream
+        # knows the difference — every mode still reads `_loop_buf` — and the
+        # audio callback does no extra work at all.
+        self._tracks: list[dict] = []
+        self._mix_old = None       # the mix being faded out of, if any
+        self._mix_fade = 1.0       # 1.0 means no crossfade in progress
 
         # Bounce: write what you are hearing back into the recording. Until
         # this existed a gesture only ever shaped playback, so every effect
@@ -759,11 +791,10 @@ class GloveSynth:
             return
         baked *= 0.5 / peak
         self.loop_on = False          # keep the callback off the swap
-        self._loop_buf = baked
+        self._tracks = []             # the layers are in the samples now
         self._loop_pos = 0.0
-        self._grains = []
         self._shot = None
-        self.loop_on = True
+        self.add_track(baked, "bounced")
         # Those effects are in the samples now. Leaving the modes on would
         # apply them to their own output a second time.
         self.harmony_on = self.granular_on = self.slices_on = False
@@ -803,12 +834,22 @@ class GloveSynth:
         self._rec_stream.stop()
         self._rec_stream.close()
         self._rec_stream = None
+        # Every way this can end says so on the page as well as in the
+        # terminal. A take that is thrown away is the one outcome you most
+        # need told about, and it was the one that only ever appeared in a
+        # console nobody is looking at while playing: from the browser it
+        # looked like pressing the button had simply done nothing.
         if not self._rec_chunks:
+            self.take_status = "nothing recorded — the microphone sent no audio"
             print("\n[nothing recorded]")
             return
         take = np.concatenate(self._rec_chunks)[:, 0]
         peak = float(np.abs(take).max())
         if peak < 1e-3:
+            self.take_status = (
+                f"take discarded: almost silent (peak {peak:.5f}). "
+                "Check mic permission in System Settings > Privacy & "
+                "Security > Microphone")
             print(
                 "\n[take was almost silent (peak "
                 f"{peak:.5f}) — discarded. Check mic permission in "
@@ -822,23 +863,225 @@ class GloveSynth:
         if self._overdub and self._loop_buf is not None:
             # Mix into a copy starting where the loop was at record start,
             # wrapping around, then swap the copy in.
-            buf = self._loop_buf.copy()
-            ofs = int(self._overdub_from) % len(buf)
-            idx = (ofs + np.arange(len(take))) % len(buf)
-            np.add.at(buf, idx, take)
-            peak = float(np.abs(buf).max())
-            if peak > 0.9:
-                buf *= 0.9 / peak
-            self._loop_buf = buf
-            print(f"\n[layer added — loop is {len(buf) / SAMPLE_RATE:.1f}s]")
+            self.add_track(take, f"take {len(self._tracks) + 1}",
+                           at=self._overdub_from)
+            self.take_status = (f"layer {len(self._tracks)} added — "
+                                f"{len(self._tracks)} layers now")
+            print(f"\n[layer {len(self._tracks)} added — "
+                  f"{self.layer_summary()}]")
         else:
             self.loop_on = False  # keep the callback off the buffer while we swap it
-            self._loop_buf = take
+            self._tracks = []
             self._loop_pos = 0.0
-            self._grains = []
             self._shot = None
-            self.loop_on = True
+            self.add_track(take, "take 1")
+            # Said plainly, because this is the button people reach for when
+            # they meant to add: a new take starts the stack over, and the
+            # layers that were there are gone.
+            self.take_status = (
+                f"take 1 recorded, {len(take) / SAMPLE_RATE:.1f}s — this "
+                "replaced the stack. Use Overdub to add a layer instead")
             print(f"\n[{len(take) / SAMPLE_RATE:.1f}s recorded — looping; move your hand to shape it]")
+
+    # ---- layers ---------------------------------------------------------
+
+    @property
+    def soloing(self) -> bool:
+        return any(t["solo"] for t in self._tracks)
+
+    def _audible(self, t: dict) -> bool:
+        """Solo wins over mute, the way it does on every mixer: the moment
+        anything is soloed, everything else is out whatever its own flag."""
+        return t["solo"] if self.soloing else not t["muted"]
+
+    def _remix(self) -> None:
+        """Rebuild the mix from the layers that are audible.
+
+        Called when the set of layers changes, never per block. The new array
+        is built whole and then swapped in, so the callback is never reading
+        one that is half written.
+        """
+        prev = self._loop_buf
+        live = [t for t in self._tracks if self._audible(t)]
+        if not self._tracks:
+            self.loop_on = False
+            self._loop_buf = None
+            self._dry_buf = None
+            self._grains, self._shot = [], None
+            return
+        n = len(self._tracks[0]["buf"])
+        # Headroom comes from the whole stack, not from the layers that
+        # happen to be audible right now. Scaling the audible sum instead
+        # made every mute 3 dB louder for everyone else — measured — which
+        # is not what a mute does on any mixer: you take one part out and
+        # the rest stay exactly where you set them. Adding a layer still
+        # lowers the lot, and deleting one still raises them, because then
+        # the stack itself has genuinely changed.
+        full = np.zeros(n)
+        for t in self._tracks:
+            full += t["buf"] * t["level"]
+        # Split rather than summed: a layer with FX off is kept out of the
+        # buffer the effects read and played back alongside it instead. The
+        # chain still runs exactly once, so this costs one array and no DSP
+        # — the alternative, a whole chain per layer, would mean a reverb
+        # and a delay line each and would break the one rule this instrument
+        # is built on, that there is exactly one of each parameter.
+        mix = np.zeros(n)
+        dry = np.zeros(n)
+        has_dry = False
+        for t in self._tracks:
+            if not self._audible(t):
+                continue
+            if t.get("fx", True):
+                mix += t["buf"] * t["level"]
+            else:
+                dry += t["buf"] * t["level"]
+                has_dry = True
+        peak = float(np.abs(full).max())
+        if peak > 0.9:
+            mix *= 0.9 / peak
+            dry *= 0.9 / peak
+        prev_dry = self._dry_buf
+        self._loop_buf = mix
+        self._dry_buf = dry if has_dry else None
+        if prev_dry is not None and self._dry_buf is not None \
+                and len(prev_dry) == len(dry):
+            self._dry_old, self._dry_fade = prev_dry, 0.0
+        # Grains are not touched. Each one holds the mix it was drawn from,
+        # so the ones in flight finish on the old sum and fade out through
+        # their own window. Cutting them was measured at four times any
+        # other jump in the block.
+        # Taking a layer out changes the waveform under the playhead, which
+        # is a step discontinuity and so a click: measured at seven times any
+        # other jump in the block. Borrowing the seek fade made it worse,
+        # because that ramps up from silence and the drop to silence is
+        # itself a bigger step. The old mix is kept instead and the two are
+        # crossfaded, which is the only version with nothing to hear.
+        if prev is not None and len(prev) == len(mix):
+            self._mix_old, self._mix_fade = prev, 0.0
+
+    def add_track(self, samples: np.ndarray, label: str, at: float = 0.0) -> None:
+        """Add a layer. The first one sets the loop's length; later ones wrap
+        into it from wherever the loop was when they started."""
+        samples = np.asarray(samples, dtype=np.float64)
+        if not self._tracks:
+            buf = samples.copy()
+        else:
+            n = len(self._tracks[0]["buf"])
+            buf = np.zeros(n)
+            idx = (int(at) + np.arange(len(samples))) % n
+            np.add.at(buf, idx, samples)
+        # Every layer gets an id that is never reused. Positions are, and a
+        # position is not a safe thing to send a command to: bounce and
+        # delete both renumber the rows, so a button pressed against the
+        # list as it was a moment ago would land on whichever layer had
+        # moved into that slot. That is how a freshly bounced take ended up
+        # muted by a click meant for a layer that no longer existed.
+        self._track_seq += 1
+        # `src` is the recording as it arrived and is never written to
+        # again; `buf` is that source with the layer's own effect chain
+        # rendered into it. Keeping both is what lets an effect be taken
+        # off: the chain is simply rendered again without it.
+        self._tracks.append(
+            {"buf": buf, "src": buf.copy(), "chain": [],
+             "muted": False, "solo": False, "level": 1.0,
+             "fx": True, "label": label, "id": self._track_seq})
+        self._remix()
+        self.loop_on = True
+
+    def track_action(self, ident: int, what: str) -> None:
+        """mute, solo or delete one layer, addressed by its id.
+
+        An id that is not here any more is a button pressed against a list
+        that has since changed — ignored, and said out loud, because the
+        alternative is acting on a layer nobody pointed at.
+        """
+        # Found by position rather than by object: a layer holds its buffer,
+        # so list.remove would compare two numpy arrays with == and raise.
+        idx = next((i for i, tr in enumerate(self._tracks)
+                    if tr["id"] == ident), None)
+        if idx is None:
+            print(f"\n[layer {ident} is gone — that press was for a list "
+                  f"that has changed. Now: {self.layer_summary()}]")
+            return
+        t = self._tracks[idx]
+        if what == "mute":
+            t["muted"] = not t["muted"]
+        elif what == "solo":
+            t["solo"] = not t["solo"]
+        elif what == "fx":
+            t["fx"] = not t.get("fx", True)
+        elif what == "delete":
+            self._tracks.pop(idx)
+        else:
+            return
+        self._remix()
+        print(f"\n[layers: {self.layer_summary()}]")
+
+    def layer_fx(self, ident: int, action: str, value: str | int) -> None:
+        """Add an effect to one layer, or take one off it.
+
+        Rendered here and not in the callback: the layer's samples are
+        rebuilt once, now, so playing it costs exactly what it cost before.
+        A layer with four effects on it is no more expensive than a bare
+        one, which is the whole reason these are a property of the layer
+        rather than another thing the hand is holding.
+        """
+        import layerfx
+
+        idx = next((i for i, tr in enumerate(self._tracks)
+                    if tr["id"] == ident), None)
+        if idx is None:
+            print(f"\n[layer {ident} is gone — nothing to change]")
+            return
+        t = self._tracks[idx]
+        chain = list(t.get("chain", []))
+        if action == "add":
+            if value not in layerfx.EFFECTS:
+                print(f"\n[no such effect: {value}]")
+                return
+            if value in chain:
+                print(f"\n[{t['label']} already has {value}]")
+                return
+            chain.append(str(value))
+        elif action == "del":
+            try:
+                chain.pop(int(value))
+            except (ValueError, IndexError):
+                return
+        elif action == "clear":
+            chain = []
+        else:
+            return
+        t["chain"] = chain
+        # The scene's scale travels with it: a major third baked over a
+        # minor scene would be wrong in exactly the way the live harmony
+        # mode takes care not to be.
+        t["buf"] = layerfx.render(t["src"], chain, self.harmony_scale)
+        self._remix()
+        print(f"\n[{t['label']}: {' + '.join(chain) if chain else 'clean'}]")
+
+    def layer_summary(self) -> str:
+        if not self._tracks:
+            return "none"
+        return ", ".join(
+            f"{i + 1} {t['label']}"
+            + ("" if self._audible(t) else " (out)")
+            + (" SOLO" if t["solo"] else "")
+            + ("" if t.get("fx", True) else " dry")
+            + (" [" + "+".join(t["chain"]) + "]" if t.get("chain") else "")
+            for i, t in enumerate(self._tracks))
+
+    def tracks_state(self) -> list:
+        """What the panel draws: one row per layer."""
+        # `n` is what the row is called on screen; `id` is what a press on it
+        # is sent against. They are not the same number and must not be: the
+        # first is a position and gets reused, the second never does.
+        return [{"n": i + 1, "id": t["id"], "label": t["label"],
+                 "muted": t["muted"], "solo": t["solo"],
+                 "fx": t.get("fx", True), "chain": list(t.get("chain", ())),
+                 "audible": self._audible(t)}
+                for i, t in enumerate(self._tracks)]
 
     def set_loop(self, samples, rate: int, label: str = "glove take") -> None:
         """Install a recording made elsewhere as the voice loop, resampled
@@ -860,11 +1103,10 @@ class GloveSynth:
         if peak > 1e-4:
             samples = samples * min(0.5 / peak, 40.0)
         self.loop_on = False           # keep the callback off the buffer
-        self._loop_buf = samples
+        self._tracks = []              # a loaded take replaces the whole stack
         self._loop_pos = 0.0
-        self._grains = []
         self._shot = None
-        self.loop_on = True
+        self.add_track(samples, label)
         self.loop_label = label
         print(f"\n[{label} loaded — {len(samples) / SAMPLE_RATE:.1f}s looping]")
 
@@ -971,6 +1213,7 @@ class GloveSynth:
         self.loop_on = False
         self.granular_on = False
         self.harmony_on = False
+        self._tracks = []
         self._loop_buf = None
         self._loop_pos = 0.0
         self._grains = []
@@ -1078,6 +1321,16 @@ class GloveSynth:
                     i1 = (i0 + 1) % len(buf)
                     frac = idx - i0
                     voice = buf[i0] * (1.0 - frac) + buf[i1] * frac
+                    if self._mix_fade < 1.0 and self._mix_old is not None:
+                        old = (self._mix_old[i0] * (1.0 - frac)
+                               + self._mix_old[i1] * frac)
+                        step = 1.0 / max(MIX_FADE * SAMPLE_RATE, 1.0)
+                        xr = np.minimum(
+                            self._mix_fade + step * np.arange(frames), 1.0)
+                        voice = old * (1.0 - xr) + voice * xr
+                        self._mix_fade = float(xr[-1])
+                        if self._mix_fade >= 1.0:
+                            self._mix_old = None
                     if self._seek_fade < 1.0:
                         step = 1.0 / max(SEEK_FADE * SAMPLE_RATE, 1.0)
                         ramp = np.minimum(
@@ -1137,6 +1390,19 @@ class GloveSynth:
             fc = min(max(fc, 30.0), 0.45 * SAMPLE_RATE)
             res = patch["resonance"]
         a = min(1.0 - np.exp(-2.0 * np.pi * fc / SAMPLE_RATE), 0.9)
+        # The feedback runs round a one-sample delay, so the loop gain creeps
+        # past unity as `a` approaches 1 and the ladder tears itself apart:
+        # measured, it diverges to infinity above resonance 2.2 once a
+        # reaches 0.9. A designed patch can ask for exactly that, and the
+        # patch matcher found it on its own within a dozen tries.
+        #
+        # Only designed patches are held back. The seven built-ins were swept
+        # across the whole hand range with this off and none of them can
+        # reach the unstable corner, so clamping them would have cost the
+        # guitar its top end for nothing - and that top end is most of what
+        # makes it a guitar.
+        if patch is not None and a > LADDER_A_SAFE:
+            res = min(res, max(3.6 - 20.0 * (a - LADDER_A_SAFE), 0.5))
         y1, y2, y3, y4 = self._lp
         lp = np.empty(frames)
         for i in range(frames):
@@ -1185,6 +1451,7 @@ class GloveSynth:
             v_in = live_in
         if v_in is not None:
             v = self._process_voice(v_in, frames)
+            v = v + self._read_dry(frames)
             v = np.tanh(v)   # its own soft clip; reverb tails can stack up
             if self._bounce is not None:
                 self._capture_bounce(v)
@@ -1403,7 +1670,25 @@ class GloveSynth:
             g = np.sin(np.pi * p)
             shifted += tap * g
             gain_sum += g
-        return shifted / (gain_sum + 1e-6)
+        shifted /= gain_sum + 1e-6
+
+        # At unity there is nothing to shift, and the algorithm stops being a
+        # copier and becomes a comb filter: dphi is zero, so the window phase
+        # freezes, the two taps sit at a fixed distance apart for good, and
+        # the crossfade that exists to hide the tap wrap never runs. What
+        # comes out is the input summed with itself a few hundred samples
+        # late, coloured by wherever the phase happened to stop — and at a
+        # loop wrap the two taps straddle the seam and disagree, which was
+        # measured as a 0.17 step with the loop playing at normal speed.
+        #
+        # Faded to dry instead. The band is a few cents wide, so no shift a
+        # hand can ask for is touched, and crossing it is a crossfade rather
+        # than a switch: the shifter runs ~25 ms behind, and swapping between
+        # the two in one sample would trade the comb for a click.
+        if abs(ratio - 1.0) < PS_UNITY:
+            wet = abs(ratio - 1.0) / PS_UNITY
+            shifted = shifted * wet + x * (1.0 - wet)
+        return shifted
 
     def _noise_gate(self, x: np.ndarray) -> np.ndarray:
         """Door opens for speech, stays shut for room hiss — which would
@@ -1411,6 +1696,42 @@ class GloveSynth:
         rms = float(np.sqrt((x ** 2).mean()))
         self._gate = 0.85 * self._gate + 0.15 * rms
         return x * np.clip((self._gate - 0.004) / 0.012, 0.0, 1.0)
+
+    def _read_dry(self, frames: int) -> np.ndarray | float:
+        """The layers that are playing past the effects, not through them.
+
+        Its own playhead, always at speed one and never seeking. That is the
+        point: scrub or stretch the layers you are shaping and the dry ones
+        carry on in time underneath, which is what makes them usable as a
+        bed to play against. Sharing the wet playhead would drag them along
+        and there would be nothing steady left to hear.
+
+        It still answers to the blend, because the blend is the loop's level
+        and not an effect, and it is panned with the rest below.
+        """
+        dry = self._dry_buf
+        if dry is None or len(dry) < 2:
+            self._dry_fade, self._dry_old = 1.0, None
+            return 0.0
+        idx = (self._dry_pos + np.arange(frames)) % len(dry)
+        i0 = idx.astype(np.intp)
+        i1 = (i0 + 1) % len(dry)
+        frac = idx - i0
+        out = dry[i0] * (1.0 - frac) + dry[i1] * frac
+        # Taking a layer off the effects changes this waveform under the
+        # playhead, which is a step and so a click. Same crossfade the wet
+        # mix uses, for the same reason.
+        if self._dry_fade < 1.0 and self._dry_old is not None \
+                and len(self._dry_old) == len(dry):
+            old = self._dry_old[i0] * (1.0 - frac) + self._dry_old[i1] * frac
+            step = 1.0 / max(MIX_FADE * SAMPLE_RATE, 1.0)
+            xr = np.minimum(self._dry_fade + step * np.arange(frames), 1.0)
+            out = old * (1.0 - xr) + out * xr
+            self._dry_fade = float(xr[-1])
+            if self._dry_fade >= 1.0:
+                self._dry_old = None
+        self._dry_pos = float((self._dry_pos + frames) % len(dry))
+        return out * self._v_vol
 
     def _process_voice(self, x: np.ndarray, frames: int) -> np.ndarray:
         """Voice-hand chain: gate -> pitch -> stutter -> delay -> reverb.
@@ -1741,10 +2062,10 @@ class GloveSynth:
             out += self._grain_voice(buf, frames, ratio) * gain
         # Aged once, after every voice has read them, not once per voice.
         alive = []
-        for start, age in self._grains:
+        for start, age, gbuf in self._grains:
             n = min(frames, GRAIN_LEN - age)
             if age + n < GRAIN_LEN:
-                alive.append([start, age + n])
+                alive.append([start, age + n, gbuf])
         self._grains = alive
         return out
 
@@ -1767,12 +2088,17 @@ class GloveSynth:
         while self._grain_timer <= 0 and span > 0:
             jitter = self._rng.uniform(-0.03, 0.03) * SAMPLE_RATE
             start = int(np.clip(centre + jitter, 0, span))
-            self._grains.append([start, 0])
+            self._grains.append([start, 0, buf])
             self._grain_timer += GRAIN_HOP
 
-    def _grain_voice(self, buf: np.ndarray, frames: int,
+    def _grain_voice(self, _buf: np.ndarray, frames: int,
                      ratio: float) -> np.ndarray:
         """The live grains, read at `ratio` times their recorded pitch.
+
+        Each grain reads the mix it was spawned against, not whatever the
+        mix is now. Muting a layer therefore never cuts a grain in half:
+        the ones already in flight finish on the old sum and fade out
+        through their own window, and only the next ones hear the change.
 
         The window is indexed by the grain's age and the sample by age times
         the ratio. That is the whole of pitch shifting: where the grain sits
@@ -1780,7 +2106,7 @@ class GloveSynth:
         cloud keeps its rhythm while the note moves.
         """
         out = np.zeros(frames)
-        for start, age in self._grains:
+        for start, age, buf in self._grains:
             n = min(frames, GRAIN_LEN - age)
             if n <= 0:
                 continue

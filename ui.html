@@ -180,6 +180,52 @@
   /* ---- mode cards ----
      Three groups with a rule between them, because ten buttons in one grid
      is a list you have to read rather than a thing you can scan. */
+  .layer { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+           border: 1px solid var(--line); border-radius: 9px; margin-top: 8px;
+           background: var(--btn); }
+  .layer.out { opacity: .45; }
+  .layer .lnum { font: 11px ui-monospace, monospace; color: var(--dim);
+                 min-width: 16px; }
+  .layer .lname { flex: 1; font-weight: 600; }
+  .layer button { padding: 4px 11px; font-size: 12px; }
+  .layer button.on { border-color: var(--accent); color: var(--accent); }
+  .layer button.kill { color: var(--dim); }
+  .layer button.kill:hover { color: #ff8585; border-color: #ff8585; }
+  /* Effects pinned to one layer. The row stays one line until a layer has
+     some, then wraps — a stack of four layers with nothing on them should
+     not be four tall rows. */
+  .layer { flex-wrap: wrap; }
+  .layer .lfx { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  /* All six are always on the row. An effect you have not put on this layer
+     is a thin outline; one you have takes its own colour, so a glance down
+     the stack says who is carrying what. Hiding the unused ones behind a
+     menu meant two clicks to reach a thing that fits on the row. */
+  .layer .pill { display: inline-flex; align-items: center; gap: 4px;
+                 padding: 2px 9px; border-radius: 999px; cursor: pointer;
+                 font: inherit; font-size: 11.5px; letter-spacing: .01em;
+                 color: var(--dim); background: transparent;
+                 border: 1px solid var(--line); transition: none; }
+  .layer .pill:hover { color: var(--text); border-color: var(--text); }
+  /* Filled, not tinted. A lit pill has to be readable as "this layer is
+     carrying this" from across the panel, and a 17% wash of the hue over
+     the row background was not — on a muted row, which is already at 45%
+     opacity, it was close to invisible. */
+  .layer .pill.on { color: #0e1116; font-weight: 700;
+                    background: hsl(var(--h) 72% 63%);
+                    border-color: hsl(var(--h) 72% 63%);
+                    box-shadow: 0 0 11px hsl(var(--h) 72% 55% / 0.45); }
+  .layer .pill.on:hover { color: #3a0c0c; background: #ff8585;
+                          border-color: #ff8585; box-shadow: none; }
+  .layer .pill.on::after { content: "\00d7"; font-size: 13px; line-height: 1;
+                           opacity: .75; }
+  /* The hand's modes, not the layer's: dashed and hollow, because they are
+     here for as long as the mode is on and then gone, and nothing about
+     this row decided them. */
+  .layer .pill.live { border-style: dashed; cursor: default; font-weight: 500;
+                      color: hsl(var(--h) 60% 70%);
+                      border-color: hsl(var(--h) 55% 48%);
+                      background: transparent; }
+  .layer .pill.live::before { content: "~ "; opacity: .7; }
   .modegrid { display: grid; grid-template-columns: repeat(3, 1fr);
               gap: 0; margin-top: 14px; }
   @media (max-width: 900px) { .modegrid { grid-template-columns: 1fr; } }
@@ -340,6 +386,13 @@
   input[type=text]::placeholder { color: var(--dim); }
   /* Status of a song load: dim while idle, accent on success, hot on
      failure — the three things worth telling apart at a glance. */
+  /* What became of the last take. Same three states as the song line:
+     ordinary news is dim, a discarded take is hot, because that one is the
+     difference between "nothing happened" and "your microphone is muted". */
+  #takestatus { font-size: 13px; color: var(--dim); margin-top: 10px;
+                line-height: 1.5; }
+  #takestatus.bad { color: var(--hot); }
+  #takestatus.ok  { color: var(--accent); }
   #songstatus { font-size: 13px; color: var(--dim); margin-top: 8px;
                 min-height: 18px; word-break: break-word; }
   #songstatus.ok  { color: var(--accent); }
@@ -647,6 +700,23 @@
     </div>
   </div>
 
+  <div class="panel" id="layerspanel" style="margin-top:16px" hidden>
+    <div class="padhead" style="margin-bottom:0">
+      <span class="label">Layers</span>
+      <span class="padang" id="layercount"></span>
+    </div>
+    <div id="layers"></div>
+    <div class="hint" style="margin-top:8px">
+      Each take is kept on its own. <b>M</b> drops one out of the mix,
+      <b>S</b> plays it alone, <b>FX</b> takes it off the hand's effects so
+      it plays clean while the rest are shaped, <b>×</b> removes it for good.
+      The filled pills are rendered into that layer and stay with it — click
+      one to put it on, click it again to take it off. A dashed pill is the
+      hand's own Texture mode passing through, on every layer that still has
+      FX on. Bounce flattens every layer into one.
+    </div>
+  </div>
+
   <div class="panel" style="margin-top:16px">
     <div class="padhead" style="margin-bottom:0">
       <span class="label">Voice &amp; modes</span>
@@ -670,6 +740,7 @@
           <button class="mode" data-ev="export" id="b-export" data-icon="export"
                   data-name="Export loop" data-desc="save the take"></button>
         </div>
+        <div id="takestatus"></div>
       </div>
 
       <div class="modegroup">
@@ -1019,6 +1090,21 @@ function setSongStatus(text, cls) {
   el.className = cls || "";
 }
 
+// Kept in step with layerfx.EFFECTS by hand: six names that change rarely,
+// against sending the same list in every state message twenty times a second.
+// The number is the hue the pill takes when the effect is on, far enough
+// apart that two lit pills on one row are told apart at a glance.
+const LAYER_FX = [["reverb", 190], ["echo", 265], ["octave up", 45],
+                  ["octave down", 18], ["reverse", 320], ["darken", 140],
+                  ["granular", 95], ["harmony", 215]];
+// The hand's own modes. These are not rendered into a layer — they are the
+// Texture panel, live, and they reach every layer that still has FX on. Shown
+// on those rows as ghosts so it is clear which layers they are landing on,
+// and which are sitting them out. Slices and Freeze are moments rather than
+// settings and belong to the gesture, not to a layer, so they are not here.
+const LIVE_MODES = [["granular", "granular", 95], ["harmony", "harmony", 215],
+                    ["reverse", "reverse", 320]];
+let LIVE_ON = { granular: false, harmony: false, reverse: false };
 const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene", c: "recalibrate", a: "bounce", s: "session", e: "export", f: "freeze", h: "harmony", j: "reverse", k: "pitchlock" };
 const INS = ["saw", "organ", "strings", "bell", "flute", "pluck", "guitar"];
 document.addEventListener("keydown", (e) => {
@@ -1989,6 +2075,98 @@ function render(s) {
       ? "saved: " + mine.join(", ") + " — they are in the instrument rail above."
       : "Nothing saved yet — saved sounds appear in the instrument rail above.";
   }
+  // Layers. Rebuilt only when the list actually changes: replacing the rows
+  // on every state message throws away the button under the pointer.
+  const tracks = s.tracks || [];
+  const lp = $("layerspanel");
+  // Shown for a single take too, not just a stack. Hiding below two made
+  // the panel vanish the moment you deleted one of a pair, which reads as
+  // the app losing your work — and if the take left behind was the muted
+  // one, its M button went with the panel and there was no way left to
+  // bring it back: silence, with nothing on screen to undo it.
+  lp.hidden = tracks.length < 1;
+  // Every field the row draws from has to be in here, or the rows are left
+  // as they are. The chain was missing: clicking a pill changed the layer,
+  // the sound followed, and the panel kept showing the old row — the effect
+  // was on and there was no way to see it.
+  LIVE_ON = { granular: !!s.granular, harmony: !!s.harmony,
+              reverse: !!s.reverse };
+  const sig = tracks.map(t =>
+    `${t.id}${t.n}${t.label}${t.muted}${t.solo}${t.fx}${(t.chain || []).join(",")}`
+  ).join("|") + "@" + Object.values(LIVE_ON).join("");
+  const host = $("layers");
+  if (host.dataset.sig !== sig) {
+    host.dataset.sig = sig;
+    host.replaceChildren(...tracks.map(t => {
+      const row = document.createElement("div");
+      row.className = "layer" + (t.audible ? "" : " out");
+      const n = document.createElement("span");
+      n.className = "lnum"; n.textContent = t.n;
+      const name = document.createElement("span");
+      name.className = "lname"; name.append(t.label);
+      // One pill per effect, lit when this layer is carrying it. Clicking a
+      // lit one takes it off, which is why it grows an x; clicking a dim one
+      // puts it on.
+      const fx = document.createElement("div");
+      fx.className = "lfx";
+      const chain = t.chain || [];
+      for (const [name_, hue] of LAYER_FX) {
+        const i = chain.indexOf(name_);
+        const pill = document.createElement("button");
+        pill.className = "pill" + (i >= 0 ? " on" : "");
+        pill.style.setProperty("--h", hue);
+        pill.append(name_);
+        pill.title = i >= 0
+          ? "take " + name_ + " off " + t.label
+          : "render " + name_ + " into " + t.label + " alone";
+        pill.onclick = () => sendEvent(i >= 0
+          ? `layerfx:${t.id}:del:${i}`
+          : `layerfx:${t.id}:add:${name_}`);
+        fx.append(pill);
+      }
+      // What the hand is doing to this layer right now, if anything.
+      if (t.fx !== false) {
+        for (const [key, label, hue] of LIVE_MODES) {
+          if (!LIVE_ON[key]) continue;
+          if ((t.chain || []).includes(label)) continue;  // already its own
+          const ghost = document.createElement("b");
+          ghost.className = "pill live";
+          ghost.style.setProperty("--h", hue);
+          ghost.append(label);
+          ghost.title = label + " is on in the Texture panel and is reaching "
+            + "every layer with FX on. Turn FX off here to sit it out, or add "
+            + "it as a pill to keep it on this layer for good.";
+          fx.append(ghost);
+        }
+      }
+      row.append(n, name, fx);
+      // FX is lit when the layer is NOT being effected, because that is the
+      // state worth spotting: everything goes through the chain unless you
+      // say otherwise, so the odd one out is the dry one.
+      for (const [key, label, active, tip] of
+           [["mute", "M", t.muted, "drop out of the mix"],
+            ["solo", "S", t.solo, "play this one alone"],
+            ["fx", "FX", t.fx === false,
+             "take this layer off the effects - it plays clean while the "
+             + "others are shaped"]]) {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.title = tip;
+        if (active) b.classList.add("on");
+        b.onclick = () => sendEvent(`track:${key}:${t.id}`);
+        row.append(b);
+      }
+      const x = document.createElement("button");
+      x.className = "kill"; x.textContent = "\u00d7"; x.title = "remove this layer";
+      x.onclick = () => sendEvent(`track:delete:${t.id}`);
+      row.append(x);
+      return row;
+    }));
+  }
+  $("layercount").textContent = tracks.length
+    ? tracks.filter(t => t.audible).length + " of " + tracks.length + " in the mix"
+    : "";
+
   $("loopinfo").textContent = s.loop_secs ? "loop: " + s.loop_secs.toFixed(1) + "s" : "no loop yet";
   // A .mid plays through the instruments rather than the loop buffer, so
   // it gets its own readout: which note is sounding and how far in we are.
@@ -2008,6 +2186,12 @@ function render(s) {
     const txt = s.song_status || "";
     setSongStatus(txt, s.song_busy ? "busy"
                      : txt.startsWith("failed") ? "bad" : txt ? "ok" : "");
+  }
+  if (s.take_status !== undefined) {
+    const t = $("takestatus");
+    t.textContent = s.take_status || "";
+    t.className = !s.take_status ? ""
+                : /discarded|nothing recorded/.test(s.take_status) ? "bad" : "ok";
   }
   $("recinfo").textContent = s.recording ? "● REC" : "";
 }

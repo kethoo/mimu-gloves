@@ -24,6 +24,13 @@ explicitly:
     python main.py --list-devices
     python main.py --audio-out AirPods --audio-in "MacBook Air Microphone"
 
+To cover a piece of music, measure it once with cover.py and then play it:
+    python cover.py track.mp3 --start 160 --seconds 16 --name "Posthumous"
+    python main.py --ble --web --cover covers/posthumous.json
+That loops a backing part built from the measured chords, locks the hand to
+the scale the passage is in, and prints the chart. Unlike --song, none of the
+original recording is in the signal path — you are playing it, not it.
+
 Add --midi to any of the above to also stream notes and CCs to a DAW (see
 midi_out.py). The built-in synth keeps playing; --midi is an extra output,
 not a replacement, so you can A/B the two.
@@ -630,6 +637,18 @@ def main() -> None:
     hand = mapping.HandState()
     voice = loop_mapping.LoopState()
     mapping.apply_scene(synth, hand)  # scene 1 sets instrument, scale and modes
+
+    # A cover arrives after the scene above, because installing one *is* a
+    # scene change: it appends its own and selects it, so applying scene 1
+    # first and the cover second leaves both reachable from the button.
+    cover_src = _flag_value("--cover")
+    if cover_src:
+        import cover as cover_mod
+
+        try:
+            cover_mod.install(cover_mod.load(cover_src), synth, hand, mapping)
+        except Exception as exc:
+            print(f"[cover] could not load {cover_src}: {exc}")
     two_hands = voice_source is not None or hasattr(source, "_target_voice")
     if two_hands:
         # Tells mapping.py to stop writing the legacy live-voice targets: the
@@ -820,6 +839,8 @@ def main() -> None:
                     "bouncing": synth.is_bouncing,
                     "session": synth.is_recording_session,
                     "session_secs": round(synth.session_seconds, 1),
+                    "tracks": synth.tracks_state(),
+                    "take_status": synth.take_status,
                     "recording": synth.is_recording,
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,

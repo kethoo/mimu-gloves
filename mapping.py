@@ -432,6 +432,16 @@ def handle_event(event: str, synth: GloveSynth,
         synth.toggle_session()
     elif event == "export":
         synth.export_loop()
+    elif event.startswith("layerfx:"):
+        # "layerfx:7:add:reverb" / "layerfx:7:del:1" / "layerfx:7:clear:"
+        _, ident, action, value = event.split(":", 3)
+        synth.layer_fx(int(ident), action, value)
+    elif event.startswith("track:"):
+        # "track:mute:7" — the panel addresses a layer by its id, not by the
+        # row it is sitting on. Rows are renumbered by every bounce and every
+        # delete; ids are not, so a press cannot land on the wrong layer.
+        _, what, ident = event.split(":")
+        synth.track_action(int(ident), what)
     elif event == "mute":
         synth.toggle_drone()
     elif event == "live":
