@@ -152,6 +152,9 @@ sh2_SensorValue_t sensorValue;
 BLECharacteristic *sensorChar;
 BLECharacteristic *audioChar;
 bool deviceConnected = false;
+// Kept so a disconnect can clear them. See ServerCallbacks::onDisconnect.
+BLE2902 *sensorCccd = nullptr;
+BLE2902 *audioCccd = nullptr;
 bool imuPresent = false;
 uint32_t lastReportMs = 0;  // watchdog: when did a real sensor report arrive
 uint32_t nextRetryMs = 0;   // rate-limit recovery attempts
@@ -204,6 +207,13 @@ class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *) override { deviceConnected = true; }
   void onDisconnect(BLEServer *srv) override {
     deviceConnected = false;
+    // A subscription belongs to the link, but the stack keeps it after the
+    // link is gone. The next client then gets 50 notifications a second while
+    // it is still discovering services, and the Mac never finishes: the link
+    // comes up, the status LED goes green, and the laptop times out, on every
+    // connection after the first until the board reboots.
+    if (sensorCccd) sensorCccd->setNotifications(false);
+    if (audioCccd) audioCccd->setNotifications(false);
     srv->getAdvertising()->start();  // let the laptop reconnect
   }
 };
@@ -570,7 +580,8 @@ void setup() {
   BLEService *service = server->createService(SERVICE_UUID);
   sensorChar = service->createCharacteristic(
       CHAR_UUID, BLECharacteristic::PROPERTY_NOTIFY);
-  sensorChar->addDescriptor(new BLE2902());
+  sensorCccd = new BLE2902();
+  sensorChar->addDescriptor(sensorCccd);
   audioChar = service->createCharacteristic(
       AUDIO_UUID, BLECharacteristic::PROPERTY_NOTIFY);
 
@@ -581,7 +592,8 @@ void setup() {
       LED_UUID, BLECharacteristic::PROPERTY_WRITE |
                 BLECharacteristic::PROPERTY_WRITE_NR);
   ledChar->setCallbacks(new LedCallbacks());
-  audioChar->addDescriptor(new BLE2902());
+  audioCccd = new BLE2902();
+  audioChar->addDescriptor(audioCccd);
   service->start();
   server->getAdvertising()->start();
   // Print the real macro, never a copy of it: a hardcoded literal here
