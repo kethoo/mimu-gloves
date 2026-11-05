@@ -405,7 +405,7 @@ def _middle_kohm(frame, src) -> float | None:
         return None
     from ble_receiver import flex_kohm
 
-    k = flex_kohm(frame.flex2_raw)
+    k = flex_kohm(frame.flex2_raw, src._flex2.pulldown)
     return None if k is None else round(k, 1)
 
 
@@ -764,12 +764,12 @@ def main() -> None:
                     # Only a real glove has flex calibration to reset; from
                     # the keyboard or the browser the bend is already a
                     # 0..1 value and there is nothing to relearn.
-                    tgt = voice_source if event.startswith("V:") else glove_src
-                    reset = getattr(tgt, "recalibrate_flex", None)
-                    if reset is not None:
-                        reset()
-                        print("\n[flex calibration reset - bend each finger "
-                              "fully once to relearn its range]")
+                    # Both gloves. The page only ever sends this untagged, so
+                    # choosing by tag meant the loop hand never heard it.
+                    for tgt in (glove_src, voice_source):
+                        reset = getattr(tgt, "recalibrate_flex", None)
+                        if reset is not None:
+                            reset()
                     continue
                 # "V:" marks the voice hand; anything else is the instrument.
                 if event.startswith("V:"):

@@ -22,3 +22,6 @@ recordings/
 # the audio out also keeps a transcription of someone's record out of the repo.
 covers/*.wav
 covers/*.mid
+
+# A flex sensor's measured readings belong to that sensor on that glove.
+flex-cal.json

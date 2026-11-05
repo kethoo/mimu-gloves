@@ -24,6 +24,8 @@ Requires:  pip install bleak
 from __future__ import annotations
 
 import asyncio
+import pathlib
+import json
 import struct
 import time
 from collections import deque
@@ -57,30 +59,67 @@ ALPHA = 0.5
 # 4095 counts end to end. The old 150 demanded 71% of that before a channel
 # would come alive, so a normal bend never registered.
 FLEX_MIN_SPAN = 80.0
-# The right glove carries one sensor, on the middle finger, specified at 7.9k
-# straight and 8.8k bent. Only used to find its pin and to report a mismatch:
-# on the glove it first read 1728 counts, 20.6k through a 15k leg, so those
-# numbers cannot calibrate it.
+# The right glove carries one sensor, on the middle finger, measuring 7.9k
+# straight and 8.8k bent. On the glove it rests at about 1726 counts, which
+# makes the resistor to ground about 5.8k rather than the 15k the firmware
+# header describes, and the whole bend about 107 counts. That is small enough
+# that a wobble looks like a bend, so its range is never learned from whatever
+# moves first: it comes from calibrate_flex.py, or failing that from these two
+# resistances and the resting reading.
 FLEX_PULLDOWN_K = 15.0
 SOLO_FLEX_KOHM = (7.9, 8.8)
-# Travel that counts as the finger really moving. Under 101 counts, the whole
-# swing the specification predicts, and well clear of the noise.
-SOLO_FLEX_MIN_SPAN = 40.0
+# Where calibrate_flex.py keeps the two measured readings.
+FLEX_CAL_FILE = pathlib.Path(__file__).parent / "flex-cal.json"
 # Above this the divider is effectively shorted to 3V3. A flex sensor cannot
-# do that by itself; it means the 15k leg to ground is missing or open.
+# do that by itself; it means the resistor to ground is missing or open.
 FLEX_SATURATED = 4000.0
+# Smoothing and the ends of the range, for a swing this small. The dead zones
+# stop 2 or 3 counts of noise reading as movement at rest or at full bend.
+SOLO_FLEX_SMOOTH = 0.45
+SOLO_FLEX_DEAD = 0.05
+
+
+def load_flex_cal(name: str, path: pathlib.Path | None = None):
+    """(straight, bent) counts for a glove, or None if it was never measured."""
+    try:
+        entry = json.loads((path or FLEX_CAL_FILE).read_text())[name]
+        return float(entry["straight"]), float(entry["bent"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def save_flex_cal(name: str, straight: float, bent: float,
+                  path: pathlib.Path | None = None) -> None:
+    target = path or FLEX_CAL_FILE
+    try:
+        data = json.loads(target.read_text())
+    except (OSError, ValueError):
+        data = {}
+    data[name] = {"straight": round(straight, 1), "bent": round(bent, 1)}
+    target.write_text(json.dumps(data, indent=2) + "\n")
 
 
 def flex_counts(kohm: float) -> float:
-    """ADC counts the divider should read for a given sensor resistance."""
-    return 4095.0 * FLEX_PULLDOWN_K / (kohm + FLEX_PULLDOWN_K)
+    """ADC counts the documented divider should read for a sensor resistance."""
+    return flex_counts_through(kohm, FLEX_PULLDOWN_K)
 
 
-def flex_kohm(counts: float | None) -> float | None:
+def flex_counts_through(kohm: float, pulldown: float) -> float:
+    return 4095.0 * pulldown / (kohm + pulldown)
+
+
+def flex_kohm(counts: float | None, pulldown: float = FLEX_PULLDOWN_K) -> float | None:
     """The sensor resistance a reading implies. None if it implies nothing."""
     if counts is None or counts <= 0.0:
         return None
-    return max(FLEX_PULLDOWN_K * (4095.0 / counts - 1.0), 0.0)
+    return max(pulldown * (4095.0 / counts - 1.0), 0.0)
+
+
+def solo_pulldown(straight: float) -> float:
+    """The resistor to ground, assuming a straight finger is the first of
+    SOLO_FLEX_KOHM. Worked out because the fitted value is not the documented
+    one, and every conversion to ohms depends on it."""
+    return SOLO_FLEX_KOHM[0] * straight / max(4095.0 - straight, 1.0)
 
 
 FLEX_INVERT = True  # bending increases resistance -> lowers the divider voltage
@@ -274,34 +313,45 @@ class _FlexChannel:
 
 
 class _SoloFlexChannel(_FlexChannel):
-    """One sensor doing a whole hand's work, measured from where it rests.
+    """One finger between two known readings, straight and bent.
 
-    The two-sensor channel learns a min and a max and assumes bending lowers
-    the reading. That is safe when a fist needs two fingers, and it is not
-    here: a stray high reading left this sensor's resting 1726 at the "bent"
-    end of a 1716..2207 range, so a relaxed finger read 0.97 and froze the
-    loop. So this one reads distance from rest, whichever way the sensor
-    moves. Relaxed is 0 by definition, and a glitch that inflates the travel
-    can only make a real bend read smaller, never make rest read bent.
-
-    The finger has to be straight when the glove connects; `c` takes a new
-    rest position from wherever it is.
+    Its range is told to it, never learned from the movement. Learning it is
+    what made this finger erratic: with only about 107 counts of real travel,
+    the first wobble could set the scale, so a small movement read as a full
+    bend, and a wobble the wrong way set the direction, so a real bend then
+    read as straightening. Now a wobble is only ever the small fraction of the
+    range that it really is.
     """
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, cal: tuple[float, float] | None = None) -> None:
         super().__init__(name)
-        self.rest: float | None = None
-        self.far = 0.0            # signed travel from rest, largest so far
+        self.calibrated = cal is not None
+        self.straight, self.bent = cal if cal else (None, None)
+        self.smooth = 0.0
+        self.outside = 0
+        self.rezero = False
+        self.warned = False
 
     @property
     def span(self) -> float:
-        return abs(self.far)
+        return 0.0 if self.straight is None else abs(self.bent - self.straight)
+
+    @property
+    def pulldown(self) -> float:
+        return FLEX_PULLDOWN_K if self.straight is None else solo_pulldown(self.straight)
 
     def recalibrate(self) -> None:
-        self.rest, self.far, self.last, self.ready = None, 0.0, None, False
-        self.recent.clear()
-        print(f"\n[{self.name}: recalibrating — keep it straight for a moment, "
-              "then bend it fully]")
+        """Take the finger's position now as straight, keeping the same bend."""
+        self.rezero = True
+        print(f"\n[{self.name}: taking this position as straight]")
+
+    def _start_from_spec(self, settled: float) -> None:
+        """No measured range yet: this reading is straight, and the two
+        resistances say how far a full bend is from it."""
+        self.straight = settled
+        self.bent = flex_counts_through(SOLO_FLEX_KOHM[1], solo_pulldown(settled))
+        print(f"\n[{self.name}: straight at {settled:.0f}, full bend expected at "
+              f"{self.bent:.0f}. Run calibrate_flex.py to measure it.]")
 
     def update(self, raw):
         if raw is None:
@@ -313,43 +363,41 @@ class _SoloFlexChannel(_FlexChannel):
         if len(self.recent) < FLEX_MEDIAN:
             return self.last
         settled = sorted(self.recent)[FLEX_MEDIAN // 2]
-        if self.rest is None:
-            self.rest = settled
-            self._report_rest(settled)
-        d = settled - self.rest
-        # The direction is only known once the travel is too big to be noise.
-        # Settled any earlier, a couple of counts of jitter picks the sign, and
-        # the real bend then looks like the finger going straighter than rest.
-        known = abs(self.far) >= SOLO_FLEX_MIN_SPAN
-        if known and d * self.far < 0:
-            # Straighter than the finger was when this began.
-            self.rest = settled
-            self.far -= d
-            d = 0.0
-        if abs(d) > abs(self.far):
-            self.far = d
-        if abs(self.far) < SOLO_FLEX_MIN_SPAN:
-            self.last = 0.0
+        if settled >= FLEX_SATURATED:
+            if not self.warned:
+                self.warned = True
+                print(f"\n[{self.name}: reads {settled:.0f}, stuck near 3.3 V. It "
+                      "cannot bend like this: check the resistor from the pin "
+                      "to GND.]")
             return self.last
+        if self.straight is None:
+            self._start_from_spec(settled)
+        if self.rezero:
+            self.rezero = False
+            self.straight, self.bent = settled, settled + self.bent - self.straight
+            self.smooth = 0.0
+        u = (settled - self.straight) / (self.bent - self.straight)
+        # A whole bend's distance past either end is not the finger. Holding
+        # the last value keeps a contact glitch from reading as a movement.
+        if u < -1.0 or u > 2.0:
+            self.outside += 1
+            self.dropouts += 1
+            if self.outside == 50 and not self.warned:
+                self.warned = True
+                print(f"\n[{self.name}: reading {settled:.0f}, far outside "
+                      f"{self.straight:.0f}..{self.bent:.0f}. Check its wires, "
+                      "or run calibrate_flex.py again.]")
+            return self.last
+        self.outside = 0
+        self.smooth += SOLO_FLEX_SMOOTH * (min(max(u, 0.0), 1.0) - self.smooth)
+        v = self.smooth
+        self.last = 0.0 if v < SOLO_FLEX_DEAD else 1.0 if v > 1.0 - SOLO_FLEX_DEAD else v
         if not self.ready:
             self.ready = True
-            print(f"\n[{self.name} moving — straight is {self.rest:.0f}]")
-        self.last = min(max((raw - self.rest) / self.far, 0.0), 1.0) + 0.0
+            kind = "measured" if self.calibrated else "from 7.9-8.8k"
+            print(f"\n[{self.name} ready: straight {self.straight:.0f}, "
+                  f"bent {self.bent:.0f} ({kind})]")
         return self.last
-
-    def _report_rest(self, settled: float) -> None:
-        lo_k, hi_k = SOLO_FLEX_KOHM
-        kohm = flex_kohm(settled)
-        if settled >= FLEX_SATURATED:
-            print(f"\n[{self.name}: reads {settled:.0f}, stuck near 3.3 V. It "
-                  f"cannot bend like this: check the {FLEX_PULLDOWN_K:.0f}k "
-                  "resistor from the pin to GND.]")
-        elif lo_k <= kohm <= hi_k:
-            print(f"\n[{self.name}: straight at {settled:.0f} = {kohm:.1f}k]")
-        else:
-            print(f"\n[{self.name}: straight at {settled:.0f}, which is "
-                  f"{kohm:.1f}k through {FLEX_PULLDOWN_K:.0f}k, not the "
-                  f"{lo_k}-{hi_k}k specified. Still usable.]")
 
 
 class BleGloveSource(GloveSource):
@@ -410,8 +458,8 @@ class BleGloveSource(GloveSource):
         self._testpattern_hits = 0
         self._warned_testpattern = False
         self._flex = _FlexChannel("flex sensor 1")
-        self._flex2 = (_SoloFlexChannel("middle finger") if solo_middle
-                       else _FlexChannel("flex sensor 2"))
+        self._flex2 = (_SoloFlexChannel("middle finger", load_flex_cal(name))
+                       if solo_middle else _FlexChannel("flex sensor 2"))
         # Re-seeded on every reconnect too, so a glove that rebooted with a
         # higher press count does not fire a burst of scene changes.
         self._presses: int | None = None
