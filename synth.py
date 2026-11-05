@@ -316,6 +316,11 @@ class GloveSynth:
         self.loop_label = "glove take"   # what the panel calls what is loaded
         self.take_status = ""            # how the last take ended, for the page
         self._track_seq = 0              # layer ids, never reused
+        # Layers playing past the effects rather than through them.
+        self._dry_buf: np.ndarray | None = None
+        self._dry_pos = 0.0        # its own playhead: scrubbing the wet
+        self._dry_old = None       # layers must not drag the dry ones with it
+        self._dry_fade = 1.0
         self._loop_buf: np.ndarray | None = None
         self._loop_pos = 0.0
         self._rec_stream: sd.InputStream | None = None
@@ -901,6 +906,7 @@ class GloveSynth:
         if not self._tracks:
             self.loop_on = False
             self._loop_buf = None
+            self._dry_buf = None
             self._grains, self._shot = [], None
             return
         n = len(self._tracks[0]["buf"])
@@ -914,14 +920,33 @@ class GloveSynth:
         full = np.zeros(n)
         for t in self._tracks:
             full += t["buf"] * t["level"]
-        mix = full.copy()
+        # Split rather than summed: a layer with FX off is kept out of the
+        # buffer the effects read and played back alongside it instead. The
+        # chain still runs exactly once, so this costs one array and no DSP
+        # — the alternative, a whole chain per layer, would mean a reverb
+        # and a delay line each and would break the one rule this instrument
+        # is built on, that there is exactly one of each parameter.
+        mix = np.zeros(n)
+        dry = np.zeros(n)
+        has_dry = False
         for t in self._tracks:
             if not self._audible(t):
-                mix -= t["buf"] * t["level"]
+                continue
+            if t.get("fx", True):
+                mix += t["buf"] * t["level"]
+            else:
+                dry += t["buf"] * t["level"]
+                has_dry = True
         peak = float(np.abs(full).max())
         if peak > 0.9:
             mix *= 0.9 / peak
+            dry *= 0.9 / peak
+        prev_dry = self._dry_buf
         self._loop_buf = mix
+        self._dry_buf = dry if has_dry else None
+        if prev_dry is not None and self._dry_buf is not None \
+                and len(prev_dry) == len(dry):
+            self._dry_old, self._dry_fade = prev_dry, 0.0
         # Grains are not touched. Each one holds the mix it was drawn from,
         # so the ones in flight finish on the old sum and fade out through
         # their own window. Cutting them was measured at four times any
@@ -955,7 +980,7 @@ class GloveSynth:
         self._track_seq += 1
         self._tracks.append(
             {"buf": buf, "muted": False, "solo": False, "level": 1.0,
-             "label": label, "id": self._track_seq})
+             "fx": True, "label": label, "id": self._track_seq})
         self._remix()
         self.loop_on = True
 
@@ -979,6 +1004,8 @@ class GloveSynth:
             t["muted"] = not t["muted"]
         elif what == "solo":
             t["solo"] = not t["solo"]
+        elif what == "fx":
+            t["fx"] = not t.get("fx", True)
         elif what == "delete":
             self._tracks.pop(idx)
         else:
@@ -993,6 +1020,7 @@ class GloveSynth:
             f"{i + 1} {t['label']}"
             + ("" if self._audible(t) else " (out)")
             + (" SOLO" if t["solo"] else "")
+            + ("" if t.get("fx", True) else " dry")
             for i, t in enumerate(self._tracks))
 
     def tracks_state(self) -> list:
@@ -1002,7 +1030,7 @@ class GloveSynth:
         # first is a position and gets reused, the second never does.
         return [{"n": i + 1, "id": t["id"], "label": t["label"],
                  "muted": t["muted"], "solo": t["solo"],
-                 "audible": self._audible(t)}
+                 "fx": t.get("fx", True), "audible": self._audible(t)}
                 for i, t in enumerate(self._tracks)]
 
     def set_loop(self, samples, rate: int, label: str = "glove take") -> None:
@@ -1373,6 +1401,7 @@ class GloveSynth:
             v_in = live_in
         if v_in is not None:
             v = self._process_voice(v_in, frames)
+            v = v + self._read_dry(frames)
             v = np.tanh(v)   # its own soft clip; reverb tails can stack up
             if self._bounce is not None:
                 self._capture_bounce(v)
@@ -1617,6 +1646,42 @@ class GloveSynth:
         rms = float(np.sqrt((x ** 2).mean()))
         self._gate = 0.85 * self._gate + 0.15 * rms
         return x * np.clip((self._gate - 0.004) / 0.012, 0.0, 1.0)
+
+    def _read_dry(self, frames: int) -> np.ndarray | float:
+        """The layers that are playing past the effects, not through them.
+
+        Its own playhead, always at speed one and never seeking. That is the
+        point: scrub or stretch the layers you are shaping and the dry ones
+        carry on in time underneath, which is what makes them usable as a
+        bed to play against. Sharing the wet playhead would drag them along
+        and there would be nothing steady left to hear.
+
+        It still answers to the blend, because the blend is the loop's level
+        and not an effect, and it is panned with the rest below.
+        """
+        dry = self._dry_buf
+        if dry is None or len(dry) < 2:
+            self._dry_fade, self._dry_old = 1.0, None
+            return 0.0
+        idx = (self._dry_pos + np.arange(frames)) % len(dry)
+        i0 = idx.astype(np.intp)
+        i1 = (i0 + 1) % len(dry)
+        frac = idx - i0
+        out = dry[i0] * (1.0 - frac) + dry[i1] * frac
+        # Taking a layer off the effects changes this waveform under the
+        # playhead, which is a step and so a click. Same crossfade the wet
+        # mix uses, for the same reason.
+        if self._dry_fade < 1.0 and self._dry_old is not None \
+                and len(self._dry_old) == len(dry):
+            old = self._dry_old[i0] * (1.0 - frac) + self._dry_old[i1] * frac
+            step = 1.0 / max(MIX_FADE * SAMPLE_RATE, 1.0)
+            xr = np.minimum(self._dry_fade + step * np.arange(frames), 1.0)
+            out = old * (1.0 - xr) + out * xr
+            self._dry_fade = float(xr[-1])
+            if self._dry_fade >= 1.0:
+                self._dry_old = None
+        self._dry_pos = float((self._dry_pos + frames) % len(dry))
+        return out * self._v_vol
 
     def _process_voice(self, x: np.ndarray, frames: int) -> np.ndarray:
         """Voice-hand chain: gate -> pitch -> stutter -> delay -> reverb.

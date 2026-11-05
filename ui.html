@@ -673,8 +673,9 @@
     <div id="layers"></div>
     <div class="hint" style="margin-top:8px">
       Each take is kept on its own. <b>M</b> drops one out of the mix,
-      <b>S</b> plays it alone, <b>×</b> removes it for good. Bounce
-      flattens them all into one.
+      <b>S</b> plays it alone, <b>FX</b> takes it off the effects so it
+      plays clean while the rest are shaped, <b>×</b> removes it for good.
+      Bounce flattens them all into one.
     </div>
   </div>
 
@@ -2031,7 +2032,7 @@ function render(s) {
   // one, its M button went with the panel and there was no way left to
   // bring it back: silence, with nothing on screen to undo it.
   lp.hidden = tracks.length < 1;
-  const sig = tracks.map(t => `${t.id}${t.n}${t.label}${t.muted}${t.solo}`).join("|");
+  const sig = tracks.map(t => `${t.id}${t.n}${t.label}${t.muted}${t.solo}${t.fx}`).join("|");
   const host = $("layers");
   if (host.dataset.sig !== sig) {
     host.dataset.sig = sig;
@@ -2043,11 +2044,18 @@ function render(s) {
       const name = document.createElement("span");
       name.className = "lname"; name.append(t.label);
       row.append(n, name);
-      for (const [key, label, active] of
-           [["mute", "M", t.muted], ["solo", "S", t.solo]]) {
+      // FX is lit when the layer is NOT being effected, because that is the
+      // state worth spotting: everything goes through the chain unless you
+      // say otherwise, so the odd one out is the dry one.
+      for (const [key, label, active, tip] of
+           [["mute", "M", t.muted, "drop out of the mix"],
+            ["solo", "S", t.solo, "play this one alone"],
+            ["fx", "FX", t.fx === false,
+             "take this layer off the effects - it plays clean while the "
+             + "others are shaped"]]) {
         const b = document.createElement("button");
         b.textContent = label;
-        b.title = key === "mute" ? "drop out of the mix" : "play this one alone";
+        b.title = tip;
         if (active) b.classList.add("on");
         b.onclick = () => sendEvent(`track:${key}:${t.id}`);
         row.append(b);
