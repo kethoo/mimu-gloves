@@ -57,17 +57,15 @@ ALPHA = 0.5
 # 4095 counts end to end. The old 150 demanded 71% of that before a channel
 # would come alive, so a normal bend never registered.
 FLEX_MIN_SPAN = 80.0
-# The right glove carries one sensor, on the middle finger, and that sensor
-# measures 7.9k straight and 8.8k bent. Through the 15k leg of the divider that
-# is 2682 down to 2581 counts: a swing of about 101, which is very little and
-# the reason this one channel does not wait to learn its range. Bending it far
-# enough to reach FLEX_MIN_SPAN would take 80% of everything it can do before
-# the finger on the panel moved at all.
+# The right glove carries one sensor, on the middle finger, specified at 7.9k
+# straight and 8.8k bent. Only used to find its pin and to report a mismatch:
+# on the glove it first read 1728 counts, 20.6k through a 15k leg, so those
+# numbers cannot calibrate it.
 FLEX_PULLDOWN_K = 15.0
 SOLO_FLEX_KOHM = (7.9, 8.8)
-# Half the expected swing, for when the channel does have to learn: after
-# recalibrating, or when the sensor does not read what it was specified as.
-SOLO_FLEX_MIN_SPAN = 50.0
+# Travel that counts as the finger really moving. Under 101 counts, the whole
+# swing the specification predicts, and well clear of the noise.
+SOLO_FLEX_MIN_SPAN = 40.0
 # Above this the divider is effectively shorted to 3V3. A flex sensor cannot
 # do that by itself; it means the 15k leg to ground is missing or open.
 FLEX_SATURATED = 4000.0
@@ -208,14 +206,11 @@ class _FlexChannel:
     which the mapping treats as "no sensor" instead of guessing.
     """
 
-    def __init__(self, name: str, kohm: tuple[float, float] | None = None,
-                 min_span: float = FLEX_MIN_SPAN) -> None:
+    def __init__(self, name: str) -> None:
         self.name = name
         self.lo = float("inf")
         self.hi = float("-inf")
         self.ready = False
-        self.kohm = kohm          # the sensor's known range, if it has one
-        self.min_span = min_span
         self.last: float | None = None   # last good mapped value
         self.dropouts = 0                # count of rejected readings
         self.recent: deque[float] = deque(maxlen=FLEX_MEDIAN)
@@ -232,7 +227,6 @@ class _FlexChannel:
         self.lo = float("inf")
         self.hi = float("-inf")
         self.ready = False
-        self.kohm = None          # learn from the finger from here on
         self.recent.clear()
         print(f"\n[{self.name}: recalibrating — bend the finger fully a few times]")
 
@@ -263,12 +257,10 @@ class _FlexChannel:
             # the sample, so the first reading after connecting would define
             # an end of the range all by itself — dropout or not.
             settled = sorted(self.recent)[FLEX_MEDIAN // 2]
-            if self.kohm is not None:
-                self._adopt_known_range(settled)
             self.lo = min(self.lo, settled)
             self.hi = max(self.hi, settled)
         span = self.hi - self.lo
-        if span < self.min_span:
+        if span < FLEX_MIN_SPAN:
             return None
         # Clamped because `raw` can sit a little outside a range learned from
         # medians, and the postures want a true 0..1.
@@ -281,31 +273,83 @@ class _FlexChannel:
         return self.last
 
 
-    def _adopt_known_range(self, settled: float) -> None:
-        """Start from the sensor's specified range, if it really reads there.
+class _SoloFlexChannel(_FlexChannel):
+    """One sensor doing a whole hand's work, measured from where it rests.
 
-        Decided once, on the first settled reading. Adopting the range blind
-        would be worse than learning it: a reading outside it gets rejected
-        as a dropout, so a wrong assumption would hold the channel dead with
-        nothing to say why. A sensor that disagrees is reported, in ohms, and
-        left to calibrate the ordinary way.
-        """
-        lo_k, hi_k = self.kohm
-        self.kohm = None
-        lo, hi = flex_counts(hi_k), flex_counts(lo_k)
-        margin = hi - lo
-        if lo - margin <= settled <= hi + margin:
-            self.lo, self.hi = lo, hi
-            print(f"\n[{self.name}: using {lo_k}-{hi_k}k = counts "
-                  f"{lo:.0f}..{hi:.0f}]")
-        elif settled >= FLEX_SATURATED:
+    The two-sensor channel learns a min and a max and assumes bending lowers
+    the reading. That is safe when a fist needs two fingers, and it is not
+    here: a stray high reading left this sensor's resting 1726 at the "bent"
+    end of a 1716..2207 range, so a relaxed finger read 0.97 and froze the
+    loop. So this one reads distance from rest, whichever way the sensor
+    moves. Relaxed is 0 by definition, and a glitch that inflates the travel
+    can only make a real bend read smaller, never make rest read bent.
+
+    The finger has to be straight when the glove connects; `c` takes a new
+    rest position from wherever it is.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.rest: float | None = None
+        self.far = 0.0            # signed travel from rest, largest so far
+
+    @property
+    def span(self) -> float:
+        return abs(self.far)
+
+    def recalibrate(self) -> None:
+        self.rest, self.far, self.last, self.ready = None, 0.0, None, False
+        self.recent.clear()
+        print(f"\n[{self.name}: recalibrating — keep it straight for a moment, "
+              "then bend it fully]")
+
+    def update(self, raw):
+        if raw is None:
+            return None
+        if raw < FLEX_VALID_MIN:
+            self.dropouts += 1
+            return self.last
+        self.recent.append(raw)
+        if len(self.recent) < FLEX_MEDIAN:
+            return self.last
+        settled = sorted(self.recent)[FLEX_MEDIAN // 2]
+        if self.rest is None:
+            self.rest = settled
+            self._report_rest(settled)
+        d = settled - self.rest
+        # The direction is only known once the travel is too big to be noise.
+        # Settled any earlier, a couple of counts of jitter picks the sign, and
+        # the real bend then looks like the finger going straighter than rest.
+        known = abs(self.far) >= SOLO_FLEX_MIN_SPAN
+        if known and d * self.far < 0:
+            # Straighter than the finger was when this began.
+            self.rest = settled
+            self.far -= d
+            d = 0.0
+        if abs(d) > abs(self.far):
+            self.far = d
+        if abs(self.far) < SOLO_FLEX_MIN_SPAN:
+            self.last = 0.0
+            return self.last
+        if not self.ready:
+            self.ready = True
+            print(f"\n[{self.name} moving — straight is {self.rest:.0f}]")
+        self.last = min(max((raw - self.rest) / self.far, 0.0), 1.0) + 0.0
+        return self.last
+
+    def _report_rest(self, settled: float) -> None:
+        lo_k, hi_k = SOLO_FLEX_KOHM
+        kohm = flex_kohm(settled)
+        if settled >= FLEX_SATURATED:
             print(f"\n[{self.name}: reads {settled:.0f}, stuck near 3.3 V. It "
                   f"cannot bend like this: check the {FLEX_PULLDOWN_K:.0f}k "
                   "resistor from the pin to GND.]")
+        elif lo_k <= kohm <= hi_k:
+            print(f"\n[{self.name}: straight at {settled:.0f} = {kohm:.1f}k]")
         else:
-            print(f"\n[{self.name}: reads {settled:.0f} = "
-                  f"{flex_kohm(settled):.1f}k, expected {lo_k}-{hi_k}k. "
-                  "Learning its range from the finger instead.]")
+            print(f"\n[{self.name}: straight at {settled:.0f}, which is "
+                  f"{kohm:.1f}k through {FLEX_PULLDOWN_K:.0f}k, not the "
+                  f"{lo_k}-{hi_k}k specified. Still usable.]")
 
 
 class BleGloveSource(GloveSource):
@@ -366,10 +410,8 @@ class BleGloveSource(GloveSource):
         self._testpattern_hits = 0
         self._warned_testpattern = False
         self._flex = _FlexChannel("flex sensor 1")
-        self._flex2 = (
-            _FlexChannel("middle finger", kohm=SOLO_FLEX_KOHM,
-                         min_span=SOLO_FLEX_MIN_SPAN)
-            if solo_middle else _FlexChannel("flex sensor 2"))
+        self._flex2 = (_SoloFlexChannel("middle finger") if solo_middle
+                       else _FlexChannel("flex sensor 2"))
         # Re-seeded on every reconnect too, so a glove that rebooted with a
         # higher press count does not fire a burst of scene changes.
         self._presses: int | None = None

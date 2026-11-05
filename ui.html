@@ -1818,13 +1818,12 @@ function postures(h){
 
 // A channel reads "—" until it has swung far enough to calibrate, and null
 // means the firmware is not sending that channel at all. The one-sensor glove
-// names its finger and shows what the sensor measures: 7.9-8.8k is right.
+// names its finger and shows what the sensor reads, assuming the 15k leg.
 function flexBadges(h){
   if (h.fingers && h.fingers.length === 1) {
     const k = h.middle_kohm;
-    const inRange = k != null && k >= 7 && k <= 10;
     const label = k == null ? "middle —" : `middle ${k.toFixed(1)} k\u03a9`;
-    return [[label, h.flex2 != null && inRange ? "on" : ""]];
+    return [[label, h.flex2 != null ? "on" : ""]];
   }
   const one = (v, n) => v == null ? [`flex${n} —`, ""] : [`flex${n} ok`, "on"];
   return [one(h.flex, 1), one(h.flex2, 2)];

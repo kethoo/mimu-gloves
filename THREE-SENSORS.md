@@ -103,17 +103,15 @@ The right glove's one sensor is on the **middle finger** and measures
 | Straight and held | open: release |
 | Change loop mode | `g`, `b`, `h` on the keyboard or panel |
 
-Through the 15k leg of the divider that resistance range is 2682 to 2581
-counts, a swing of about 101. That is too small to wait for the ordinary
-self-calibration, which wants 80 counts before it believes a finger, so the
-channel starts from the known range and needs no bending first.
+The channel measures **distance from where the finger rests**, so the finger
+must be straight when the glove connects; `c` takes a new rest position. It
+does not assume which way the reading moves or use 7.9-8.8k as a calibration:
+on the glove the sensor first read 1728 counts, which is 20.6k through a 15k
+leg. Learning a plain min and max left that resting value at the "bent" end
+of the range, so a relaxed finger froze the loop.
 
-It does not depend on which pin the sensor landed on: half a second after
-connecting it takes the pin that reads like a sensor and reports it as the
-middle finger. If the reading disagrees with 7.9-8.8k it says so, in ohms, and
-learns the range from the finger instead; `c` does the same on request. A
-reading stuck near 4095 means the 15k resistor to ground is missing or open,
-and nothing in software can make that finger bend.
+It finds its own pin too. A reading stuck near 4095 means the 15k resistor to
+ground is missing or open, and it says so.
 
 The panel draws this: only the middle finger curls, Point is gone from that
 hand, and a badge shows what the sensor measures right now.
