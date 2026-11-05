@@ -180,6 +180,17 @@
   /* ---- mode cards ----
      Three groups with a rule between them, because ten buttons in one grid
      is a list you have to read rather than a thing you can scan. */
+  .layer { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+           border: 1px solid var(--line); border-radius: 9px; margin-top: 8px;
+           background: var(--btn); }
+  .layer.out { opacity: .45; }
+  .layer .lnum { font: 11px ui-monospace, monospace; color: var(--dim);
+                 min-width: 16px; }
+  .layer .lname { flex: 1; font-weight: 600; }
+  .layer button { padding: 4px 11px; font-size: 12px; }
+  .layer button.on { border-color: var(--accent); color: var(--accent); }
+  .layer button.kill { color: var(--dim); }
+  .layer button.kill:hover { color: #ff8585; border-color: #ff8585; }
   .modegrid { display: grid; grid-template-columns: repeat(3, 1fr);
               gap: 0; margin-top: 14px; }
   @media (max-width: 900px) { .modegrid { grid-template-columns: 1fr; } }
@@ -644,6 +655,19 @@
       <b>Loop hand:</b> roll = scrub, tilt = loop speed, yaw = its own pan,
       index = live/loop blend, middle = reverb. Fist freezes, open releases,
       point cycles normal → granular → slices, a flick fires a slice.
+    </div>
+  </div>
+
+  <div class="panel" id="layerspanel" style="margin-top:16px" hidden>
+    <div class="padhead" style="margin-bottom:0">
+      <span class="label">Layers</span>
+      <span class="padang" id="layercount"></span>
+    </div>
+    <div id="layers"></div>
+    <div class="hint" style="margin-top:8px">
+      Each take is kept on its own. <b>M</b> drops one out of the mix,
+      <b>S</b> plays it alone, <b>×</b> removes it for good. Bounce
+      flattens them all into one.
     </div>
   </div>
 
@@ -1989,6 +2013,43 @@ function render(s) {
       ? "saved: " + mine.join(", ") + " — they are in the instrument rail above."
       : "Nothing saved yet — saved sounds appear in the instrument rail above.";
   }
+  // Layers. Rebuilt only when the list actually changes: replacing the rows
+  // on every state message throws away the button under the pointer.
+  const tracks = s.tracks || [];
+  const lp = $("layerspanel");
+  lp.hidden = tracks.length < 2;
+  const sig = tracks.map(t => `${t.n}${t.label}${t.muted}${t.solo}`).join("|");
+  const host = $("layers");
+  if (host.dataset.sig !== sig) {
+    host.dataset.sig = sig;
+    host.replaceChildren(...tracks.map(t => {
+      const row = document.createElement("div");
+      row.className = "layer" + (t.audible ? "" : " out");
+      const n = document.createElement("span");
+      n.className = "lnum"; n.textContent = t.n;
+      const name = document.createElement("span");
+      name.className = "lname"; name.append(t.label);
+      row.append(n, name);
+      for (const [key, label, active] of
+           [["mute", "M", t.muted], ["solo", "S", t.solo]]) {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.title = key === "mute" ? "drop out of the mix" : "play this one alone";
+        if (active) b.classList.add("on");
+        b.onclick = () => sendEvent(`track:${key}:${t.n}`);
+        row.append(b);
+      }
+      const x = document.createElement("button");
+      x.className = "kill"; x.textContent = "\u00d7"; x.title = "remove this layer";
+      x.onclick = () => sendEvent(`track:delete:${t.n}`);
+      row.append(x);
+      return row;
+    }));
+  }
+  $("layercount").textContent = tracks.length
+    ? tracks.filter(t => t.audible).length + " of " + tracks.length + " in the mix"
+    : "";
+
   $("loopinfo").textContent = s.loop_secs ? "loop: " + s.loop_secs.toFixed(1) + "s" : "no loop yet";
   // A .mid plays through the instruments rather than the loop buffer, so
   // it gets its own readout: which note is sounding and how far in we are.

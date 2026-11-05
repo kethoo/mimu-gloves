@@ -309,6 +309,17 @@ class GloveSynth:
         self._overdub = False
         self._overdub_from = 0.0  # loop position when the overdub started
 
+        # Layers, kept apart. Overdub used to sum the new take straight into
+        # the buffer, which made a layer unrecoverable the moment it landed:
+        # you could add to a loop but never take anything back out of it.
+        # Each take is its own array now and `_loop_buf` is their mix, so
+        # muting one is a question of leaving it out of that sum.
+        #
+        # The mix is cached rather than built per block. Nothing downstream
+        # knows the difference — every mode still reads `_loop_buf` — and the
+        # audio callback does no extra work at all.
+        self._tracks: list[dict] = []
+
         # Bounce: write what you are hearing back into the recording. Until
         # this existed a gesture only ever shaped playback, so every effect
         # applied to the whole buffer at once and a second layer could not be
@@ -759,11 +770,10 @@ class GloveSynth:
             return
         baked *= 0.5 / peak
         self.loop_on = False          # keep the callback off the swap
-        self._loop_buf = baked
+        self._tracks = []             # the layers are in the samples now
         self._loop_pos = 0.0
-        self._grains = []
         self._shot = None
-        self.loop_on = True
+        self.add_track(baked, "bounced")
         # Those effects are in the samples now. Leaving the modes on would
         # apply them to their own output a second time.
         self.harmony_on = self.granular_on = self.slices_on = False
@@ -822,23 +832,99 @@ class GloveSynth:
         if self._overdub and self._loop_buf is not None:
             # Mix into a copy starting where the loop was at record start,
             # wrapping around, then swap the copy in.
-            buf = self._loop_buf.copy()
-            ofs = int(self._overdub_from) % len(buf)
-            idx = (ofs + np.arange(len(take))) % len(buf)
-            np.add.at(buf, idx, take)
-            peak = float(np.abs(buf).max())
-            if peak > 0.9:
-                buf *= 0.9 / peak
-            self._loop_buf = buf
-            print(f"\n[layer added — loop is {len(buf) / SAMPLE_RATE:.1f}s]")
+            self.add_track(take, f"take {len(self._tracks) + 1}",
+                           at=self._overdub_from)
+            print(f"\n[layer {len(self._tracks)} added — "
+                  f"{self.layer_summary()}]")
         else:
             self.loop_on = False  # keep the callback off the buffer while we swap it
-            self._loop_buf = take
+            self._tracks = []
             self._loop_pos = 0.0
-            self._grains = []
             self._shot = None
-            self.loop_on = True
+            self.add_track(take, "take 1")
             print(f"\n[{len(take) / SAMPLE_RATE:.1f}s recorded — looping; move your hand to shape it]")
+
+    # ---- layers ---------------------------------------------------------
+
+    @property
+    def soloing(self) -> bool:
+        return any(t["solo"] for t in self._tracks)
+
+    def _audible(self, t: dict) -> bool:
+        """Solo wins over mute, the way it does on every mixer: the moment
+        anything is soloed, everything else is out whatever its own flag."""
+        return t["solo"] if self.soloing else not t["muted"]
+
+    def _remix(self) -> None:
+        """Rebuild the mix from the layers that are audible.
+
+        Called when the set of layers changes, never per block. The new array
+        is built whole and then swapped in, so the callback is never reading
+        one that is half written.
+        """
+        live = [t for t in self._tracks if self._audible(t)]
+        if not self._tracks:
+            self.loop_on = False
+            self._loop_buf = None
+            self._grains, self._shot = [], None
+            return
+        n = len(self._tracks[0]["buf"])
+        mix = np.zeros(n)
+        for t in live:
+            mix += t["buf"] * t["level"]
+        peak = float(np.abs(mix).max())
+        if peak > 0.9:
+            mix *= 0.9 / peak
+        self._loop_buf = mix
+        self._grains = []          # grains point into the old array
+
+    def add_track(self, samples: np.ndarray, label: str, at: float = 0.0) -> None:
+        """Add a layer. The first one sets the loop's length; later ones wrap
+        into it from wherever the loop was when they started."""
+        samples = np.asarray(samples, dtype=np.float64)
+        if not self._tracks:
+            buf = samples.copy()
+        else:
+            n = len(self._tracks[0]["buf"])
+            buf = np.zeros(n)
+            idx = (int(at) + np.arange(len(samples))) % n
+            np.add.at(buf, idx, samples)
+        self._tracks.append(
+            {"buf": buf, "muted": False, "solo": False, "level": 1.0,
+             "label": label})
+        self._remix()
+        self.loop_on = True
+
+    def track_action(self, index: int, what: str) -> None:
+        """mute, solo or delete one layer, by position."""
+        if not 0 <= index < len(self._tracks):
+            return
+        t = self._tracks[index]
+        if what == "mute":
+            t["muted"] = not t["muted"]
+        elif what == "solo":
+            t["solo"] = not t["solo"]
+        elif what == "delete":
+            self._tracks.pop(index)
+        else:
+            return
+        self._remix()
+        print(f"\n[layers: {self.layer_summary()}]")
+
+    def layer_summary(self) -> str:
+        if not self._tracks:
+            return "none"
+        return ", ".join(
+            f"{i + 1} {t['label']}"
+            + ("" if self._audible(t) else " (out)")
+            + (" SOLO" if t["solo"] else "")
+            for i, t in enumerate(self._tracks))
+
+    def tracks_state(self) -> list:
+        """What the panel draws: one row per layer."""
+        return [{"n": i + 1, "label": t["label"], "muted": t["muted"],
+                 "solo": t["solo"], "audible": self._audible(t)}
+                for i, t in enumerate(self._tracks)]
 
     def set_loop(self, samples, rate: int, label: str = "glove take") -> None:
         """Install a recording made elsewhere as the voice loop, resampled
@@ -860,11 +946,10 @@ class GloveSynth:
         if peak > 1e-4:
             samples = samples * min(0.5 / peak, 40.0)
         self.loop_on = False           # keep the callback off the buffer
-        self._loop_buf = samples
+        self._tracks = []              # a loaded take replaces the whole stack
         self._loop_pos = 0.0
-        self._grains = []
         self._shot = None
-        self.loop_on = True
+        self.add_track(samples, label)
         self.loop_label = label
         print(f"\n[{label} loaded — {len(samples) / SAMPLE_RATE:.1f}s looping]")
 
@@ -971,6 +1056,7 @@ class GloveSynth:
         self.loop_on = False
         self.granular_on = False
         self.harmony_on = False
+        self._tracks = []
         self._loop_buf = None
         self._loop_pos = 0.0
         self._grains = []

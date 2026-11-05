@@ -820,6 +820,7 @@ def main() -> None:
                     "bouncing": synth.is_bouncing,
                     "session": synth.is_recording_session,
                     "session_secs": round(synth.session_seconds, 1),
+                    "tracks": synth.tracks_state(),
                     "recording": synth.is_recording,
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,

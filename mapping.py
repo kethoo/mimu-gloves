@@ -359,6 +359,10 @@ def handle_event(event: str, synth: GloveSynth,
         synth.toggle_session()
     elif event == "export":
         synth.export_loop()
+    elif event.startswith("track:"):
+        # "track:mute:2" — the panel addresses a layer by position.
+        _, what, n = event.split(":")
+        synth.track_action(int(n) - 1, what)
     elif event == "mute":
         synth.toggle_drone()
     elif event == "live":
