@@ -206,11 +206,16 @@
                  color: var(--dim); background: transparent;
                  border: 1px solid var(--line); transition: none; }
   .layer .pill:hover { color: var(--text); border-color: var(--text); }
-  .layer .pill.on { color: hsl(var(--h) 72% 68%);
-                    border-color: hsl(var(--h) 65% 52%);
-                    background: hsl(var(--h) 60% 50% / 0.17); }
-  .layer .pill.on:hover { color: #ff8585; border-color: #ff8585;
-                          background: rgba(255, 133, 133, 0.14); }
+  /* Filled, not tinted. A lit pill has to be readable as "this layer is
+     carrying this" from across the panel, and a 17% wash of the hue over
+     the row background was not — on a muted row, which is already at 45%
+     opacity, it was close to invisible. */
+  .layer .pill.on { color: #0e1116; font-weight: 700;
+                    background: hsl(var(--h) 72% 63%);
+                    border-color: hsl(var(--h) 72% 63%);
+                    box-shadow: 0 0 11px hsl(var(--h) 72% 55% / 0.45); }
+  .layer .pill.on:hover { color: #3a0c0c; background: #ff8585;
+                          border-color: #ff8585; box-shadow: none; }
   .layer .pill.on::after { content: "\00d7"; font-size: 13px; line-height: 1;
                            opacity: .75; }
   .modegrid { display: grid; grid-template-columns: repeat(3, 1fr);
@@ -2062,7 +2067,13 @@ function render(s) {
   // one, its M button went with the panel and there was no way left to
   // bring it back: silence, with nothing on screen to undo it.
   lp.hidden = tracks.length < 1;
-  const sig = tracks.map(t => `${t.id}${t.n}${t.label}${t.muted}${t.solo}${t.fx}`).join("|");
+  // Every field the row draws from has to be in here, or the rows are left
+  // as they are. The chain was missing: clicking a pill changed the layer,
+  // the sound followed, and the panel kept showing the old row — the effect
+  // was on and there was no way to see it.
+  const sig = tracks.map(t =>
+    `${t.id}${t.n}${t.label}${t.muted}${t.solo}${t.fx}${(t.chain || []).join(",")}`
+  ).join("|");
   const host = $("layers");
   if (host.dataset.sig !== sig) {
     host.dataset.sig = sig;
