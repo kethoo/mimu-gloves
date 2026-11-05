@@ -204,7 +204,14 @@ class LedCallbacks : public BLECharacteristicCallbacks {
 };
 
 class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer *) override { deviceConnected = true; }
+  void onConnect(BLEServer *srv, esp_ble_gatts_cb_param_t *param) override {
+    deviceConnected = true;
+    // Ask for the fastest link Apple allows: 15-30 ms (units of 1.25 ms), no
+    // skipped events, 4 s timeout. Left to itself the Mac was measured settling
+    // on 30 ms with long gaps, about 20 packets a second from a 50 Hz sensor,
+    // which is a visible lag on the wrist.
+    srv->updateConnParams(param->connect.remote_bda, 12, 24, 0, 400);
+  }
   void onDisconnect(BLEServer *srv) override {
     deviceConnected = false;
     // A subscription belongs to the link, but the stack keeps it after the

@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import json
+import math
 import struct
 import time
 from collections import deque
@@ -50,6 +51,11 @@ FROZEN_WARN_S = 2.0      # identical orientation for this long = stalled sensor
 # than the original sketch's 0.85 — at 50 Hz that gives ~40 ms of lag instead
 # of ~100 ms, which is the difference between playable and sluggish.
 ALPHA = 0.5
+# ALPHA is per packet, so it only means ~40 ms at 50 Hz. Measured on the glove,
+# the Mac can deliver 20 packets a second or fewer, and the same filter then
+# lags over 200 ms. Expressed as a time constant it stays the same at any rate,
+# and gives ALPHA's value back at 50 Hz.
+POSE_TAU = 0.029
 
 # Flex sensor: how much ADC swing counts as a real, deliberate bend rather
 # than noise. Below this the sensor is treated as absent.
@@ -782,8 +788,9 @@ class BleGloveSource(GloveSource):
             # board's own frame, so flipping first would subtract the zero
             # pose with the wrong sign and leave the hand off-centre.
             raw = (-raw[0], -raw[1], raw[2])
+        keep = math.exp(-max(time.monotonic() - self._prev_t, 1e-3) / POSE_TAU)
         for i in range(3):
-            self._smoothed[i] = ALPHA * self._smoothed[i] + (1 - ALPHA) * raw[i]
+            self._smoothed[i] = keep * self._smoothed[i] + (1 - keep) * raw[i]
         r, p, y = self._smoothed
 
         now = time.monotonic()
