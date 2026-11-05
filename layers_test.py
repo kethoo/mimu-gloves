@@ -129,29 +129,30 @@ def main() -> None:
           f"   {'clicks':>6}")
     base = row("all three", render(sy), None)
 
+    ids = [t["id"] for t in sy.tracks_state()]
     checks: list[tuple[str, bool]] = []
     for i, (label, _hz) in enumerate(TAKES):
         with quiet():
-            sy.track_action(i, "mute")
+            sy.track_action(ids[i], "mute")
         got = row(f"{label} muted", render(sy), base)
         with quiet():
-            sy.track_action(i, "mute")
+            sy.track_action(ids[i], "mute")
         gone = got[i] - base[i] < -20
         others = all(abs(got[j] - base[j]) < 3 for j in range(len(TAKES)) if j != i)
         checks.append((f"muting {label} removes only {label}", gone and others))
 
     for i, (label, _hz) in enumerate(TAKES):
         with quiet():
-            sy.track_action(i, "solo")
+            sy.track_action(ids[i], "solo")
         got = row(f"{label} soloed", render(sy), base)
         with quiet():
-            sy.track_action(i, "solo")
+            sy.track_action(ids[i], "solo")
         kept = got[i] - base[i] > -3
         others = all(got[j] - base[j] < -20 for j in range(len(TAKES)) if j != i)
         checks.append((f"soloing {label} leaves only {label}", kept and others))
 
     with quiet():
-        sy.track_action(1, "delete")
+        sy.track_action(ids[1], "delete")
     got = row("take 2 deleted", render(sy), base)
     checks.append(("deleting take 2 removes only take 2",
                    got[1] - base[1] < -20 and got[0] - base[0] > -3

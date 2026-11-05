@@ -2031,7 +2031,7 @@ function render(s) {
   // one, its M button went with the panel and there was no way left to
   // bring it back: silence, with nothing on screen to undo it.
   lp.hidden = tracks.length < 1;
-  const sig = tracks.map(t => `${t.n}${t.label}${t.muted}${t.solo}`).join("|");
+  const sig = tracks.map(t => `${t.id}${t.n}${t.label}${t.muted}${t.solo}`).join("|");
   const host = $("layers");
   if (host.dataset.sig !== sig) {
     host.dataset.sig = sig;
@@ -2049,12 +2049,12 @@ function render(s) {
         b.textContent = label;
         b.title = key === "mute" ? "drop out of the mix" : "play this one alone";
         if (active) b.classList.add("on");
-        b.onclick = () => sendEvent(`track:${key}:${t.n}`);
+        b.onclick = () => sendEvent(`track:${key}:${t.id}`);
         row.append(b);
       }
       const x = document.createElement("button");
       x.className = "kill"; x.textContent = "\u00d7"; x.title = "remove this layer";
-      x.onclick = () => sendEvent(`track:delete:${t.n}`);
+      x.onclick = () => sendEvent(`track:delete:${t.id}`);
       row.append(x);
       return row;
     }));

@@ -315,6 +315,7 @@ class GloveSynth:
         self.loop_on = False
         self.loop_label = "glove take"   # what the panel calls what is loaded
         self.take_status = ""            # how the last take ended, for the page
+        self._track_seq = 0              # layer ids, never reused
         self._loop_buf: np.ndarray | None = None
         self._loop_pos = 0.0
         self._rec_stream: sd.InputStream | None = None
@@ -945,23 +946,41 @@ class GloveSynth:
             buf = np.zeros(n)
             idx = (int(at) + np.arange(len(samples))) % n
             np.add.at(buf, idx, samples)
+        # Every layer gets an id that is never reused. Positions are, and a
+        # position is not a safe thing to send a command to: bounce and
+        # delete both renumber the rows, so a button pressed against the
+        # list as it was a moment ago would land on whichever layer had
+        # moved into that slot. That is how a freshly bounced take ended up
+        # muted by a click meant for a layer that no longer existed.
+        self._track_seq += 1
         self._tracks.append(
             {"buf": buf, "muted": False, "solo": False, "level": 1.0,
-             "label": label})
+             "label": label, "id": self._track_seq})
         self._remix()
         self.loop_on = True
 
-    def track_action(self, index: int, what: str) -> None:
-        """mute, solo or delete one layer, by position."""
-        if not 0 <= index < len(self._tracks):
+    def track_action(self, ident: int, what: str) -> None:
+        """mute, solo or delete one layer, addressed by its id.
+
+        An id that is not here any more is a button pressed against a list
+        that has since changed — ignored, and said out loud, because the
+        alternative is acting on a layer nobody pointed at.
+        """
+        # Found by position rather than by object: a layer holds its buffer,
+        # so list.remove would compare two numpy arrays with == and raise.
+        idx = next((i for i, tr in enumerate(self._tracks)
+                    if tr["id"] == ident), None)
+        if idx is None:
+            print(f"\n[layer {ident} is gone — that press was for a list "
+                  f"that has changed. Now: {self.layer_summary()}]")
             return
-        t = self._tracks[index]
+        t = self._tracks[idx]
         if what == "mute":
             t["muted"] = not t["muted"]
         elif what == "solo":
             t["solo"] = not t["solo"]
         elif what == "delete":
-            self._tracks.pop(index)
+            self._tracks.pop(idx)
         else:
             return
         self._remix()
@@ -978,8 +997,12 @@ class GloveSynth:
 
     def tracks_state(self) -> list:
         """What the panel draws: one row per layer."""
-        return [{"n": i + 1, "label": t["label"], "muted": t["muted"],
-                 "solo": t["solo"], "audible": self._audible(t)}
+        # `n` is what the row is called on screen; `id` is what a press on it
+        # is sent against. They are not the same number and must not be: the
+        # first is a position and gets reused, the second never does.
+        return [{"n": i + 1, "id": t["id"], "label": t["label"],
+                 "muted": t["muted"], "solo": t["solo"],
+                 "audible": self._audible(t)}
                 for i, t in enumerate(self._tracks)]
 
     def set_loop(self, samples, rate: int, label: str = "glove take") -> None:

@@ -360,9 +360,11 @@ def handle_event(event: str, synth: GloveSynth,
     elif event == "export":
         synth.export_loop()
     elif event.startswith("track:"):
-        # "track:mute:2" — the panel addresses a layer by position.
-        _, what, n = event.split(":")
-        synth.track_action(int(n) - 1, what)
+        # "track:mute:7" — the panel addresses a layer by its id, not by the
+        # row it is sitting on. Rows are renumbered by every bounce and every
+        # delete; ids are not, so a press cannot land on the wrong layer.
+        _, what, ident = event.split(":")
+        synth.track_action(int(ident), what)
     elif event == "mute":
         synth.toggle_drone()
     elif event == "live":
