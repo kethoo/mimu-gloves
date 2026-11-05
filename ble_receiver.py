@@ -60,14 +60,20 @@ ALPHA = 0.5
 # would come alive, so a normal bend never registered.
 FLEX_MIN_SPAN = 80.0
 # The right glove carries one sensor, on the middle finger, measuring 7.9k
-# straight and 8.8k bent. On the glove it rests at about 1726 counts, which
-# makes the resistor to ground about 5.8k rather than the 15k the firmware
-# header describes, and the whole bend about 107 counts. That is small enough
-# that a wobble looks like a bend, so its range is never learned from whatever
-# moves first: it comes from calibrate_flex.py, or failing that from these two
-# resistances and the resting reading.
+# straight and 8.8k bent. On the glove it rests around 1640-1730 counts and a
+# full bend takes it down about 160, which is small enough that a wobble looks
+# like a bend, so its range is never learned from whatever moves first: it comes
+# from calibrate_flex.py, or failing that from that measured bend and the
+# resting reading.
+#
+# That glove also has an intermittent connection that throws the reading up,
+# to 3132 and 4077 in measurements, in the sensor-shorted or lost-ground
+# direction. A real bend only ever moves it down, which is what separates them.
 FLEX_PULLDOWN_K = 15.0
 SOLO_FLEX_KOHM = (7.9, 8.8)
+SOLO_FLEX_TRAVEL = -160.0      # counts from straight to fully bent
+SOLO_FLEX_NORMAL_MAX = 1900.0  # above this at rest, the connection is out
+SOLO_FLEX_FAULT_MARGIN = 0.25  # of a bend past straight: not the finger
 # Where calibrate_flex.py keeps the two measured readings.
 FLEX_CAL_FILE = pathlib.Path(__file__).parent / "flex-cal.json"
 # Above this the divider is effectively shorted to 3V3. A flex sensor cannot
@@ -345,13 +351,21 @@ class _SoloFlexChannel(_FlexChannel):
         self.rezero = True
         print(f"\n[{self.name}: taking this position as straight]")
 
-    def _start_from_spec(self, settled: float) -> None:
-        """No measured range yet: this reading is straight, and the two
-        resistances say how far a full bend is from it."""
+    def _start_from_rest(self, settled: float) -> None:
+        """No saved range: this reading is straight, and a full bend is the
+        measured distance below it."""
         self.straight = settled
-        self.bent = flex_counts_through(SOLO_FLEX_KOHM[1], solo_pulldown(settled))
-        print(f"\n[{self.name}: straight at {settled:.0f}, full bend expected at "
-              f"{self.bent:.0f}. Run calibrate_flex.py to measure it.]")
+        self.bent = settled + SOLO_FLEX_TRAVEL
+        print(f"\n[{self.name}: straight at {settled:.0f}, full bend at "
+              f"{self.bent:.0f}. Press c with the finger straight if it drifts.]")
+
+    def _note_fault(self, settled: float) -> None:
+        self.outside += 1
+        self.dropouts += 1
+        if self.outside == 50 and not self.warned:
+            self.warned = True
+            print(f"\n[{self.name}: connection dropping out (reading "
+                  f"{settled:.0f}). Holding the last value until it returns.]")
 
     def update(self, raw):
         if raw is None:
@@ -370,23 +384,23 @@ class _SoloFlexChannel(_FlexChannel):
                       "cannot bend like this: check the resistor from the pin "
                       "to GND.]")
             return self.last
+        # A position is only taken as straight while the connection is good,
+        # or a dropout at the wrong moment would become the zero point.
+        trustworthy = self.calibrated or settled <= SOLO_FLEX_NORMAL_MAX
         if self.straight is None:
-            self._start_from_spec(settled)
-        if self.rezero:
+            if not trustworthy:
+                self._note_fault(settled)
+                return self.last
+            self._start_from_rest(settled)
+        if self.rezero and trustworthy:
             self.rezero = False
             self.straight, self.bent = settled, settled + self.bent - self.straight
             self.smooth = 0.0
         u = (settled - self.straight) / (self.bent - self.straight)
-        # A whole bend's distance past either end is not the finger. Holding
-        # the last value keeps a contact glitch from reading as a movement.
-        if u < -1.0 or u > 2.0:
-            self.outside += 1
-            self.dropouts += 1
-            if self.outside == 50 and not self.warned:
-                self.warned = True
-                print(f"\n[{self.name}: reading {settled:.0f}, far outside "
-                      f"{self.straight:.0f}..{self.bent:.0f}. Check its wires, "
-                      "or run calibrate_flex.py again.]")
+        # Past straight is not the finger, and neither is a whole bend beyond
+        # full. Holding the last value keeps a dropout from reading as movement.
+        if u < -SOLO_FLEX_FAULT_MARGIN or u > 2.0:
+            self._note_fault(settled)
             return self.last
         self.outside = 0
         self.smooth += SOLO_FLEX_SMOOTH * (min(max(u, 0.0), 1.0) - self.smooth)
@@ -394,7 +408,7 @@ class _SoloFlexChannel(_FlexChannel):
         self.last = 0.0 if v < SOLO_FLEX_DEAD else 1.0 if v > 1.0 - SOLO_FLEX_DEAD else v
         if not self.ready:
             self.ready = True
-            kind = "measured" if self.calibrated else "from 7.9-8.8k"
+            kind = "calibrated" if self.calibrated else "from the resting reading"
             print(f"\n[{self.name} ready: straight {self.straight:.0f}, "
                   f"bent {self.bent:.0f} ({kind})]")
         return self.last

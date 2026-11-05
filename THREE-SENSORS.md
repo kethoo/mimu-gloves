@@ -103,16 +103,18 @@ The right glove's one sensor is on the **middle finger** and measures
 | Straight and held | open: release |
 | Change loop mode | `g`, `b`, `h` on the keyboard or panel |
 
-The finger moves between two known readings, straight and bent. Measure them
-with `python calibrate_flex.py`, which takes under a minute and saves them to
-`flex-cal.json`. Until then they come from 7.9-8.8k and the resting reading,
-so the finger must be straight when the glove connects.
+The finger moves between two readings, straight and bent: its resting reading
+at connect and about 160 counts below that, as measured on this glove, or a
+pair saved by `python calibrate_flex.py`. So the finger must be straight when
+the glove connects. If it drifts, straighten it and press `c`.
 
-The range is never learned from movement. On this glove the whole bend is only
-about 107 counts, so learning it let the first wobble set the scale and the
-direction: a small movement read as a full bend, and a real bend could read as
-straightening. If it shifts during a session, straighten the finger and press
-`c`, which takes that position as straight and keeps the same bend.
+The range is never learned from movement. With so small a bend, learning it let
+the first wobble set the scale and the direction.
+
+This glove also has an intermittent connection that throws the reading up, as
+far as 4077. A real bend only moves it down, so anything above straight is
+treated as a dropout and the last value is held. A dropout cannot read as a
+bend, but a poor connection that pulls the reading down still could.
 
 It finds its own pin too. A reading stuck near 4095 means the 15k resistor to
 ground is missing or open, and it says so.
