@@ -118,11 +118,13 @@ def _push_hand_leds(synth, live_src, loop_src) -> None:
         if synth.instrument_off:
             # Silenced to let a loaded song through. This is the state that
             # was invisible before and kept reading as a fault.
-            live_src.set_led(hue, 150, LED_BREATHE, phase, period)
+            live_src.set_led(hue, 255, LED_BREATHE, phase, period)
         else:
-            # Bright while the gate is open, dim but lit while it is not:
-            # the hand is still "holding" that instrument either way.
-            val = 255 if synth.drone_on else 60
+            # Bright while the gate is open, dimmer but lit while it is not:
+            # the hand is still "holding" that instrument either way. The
+            # firmware caps this LED at 48 of 255 and it sits under two layers
+            # of fabric, so 60 here lit it at 11 of 255, which read as off.
+            val = 255 if synth.drone_on else 140
             pat = LED_ACCENT if period else LED_STEADY
             live_src.set_led(hue, val, pat, phase, period)
 

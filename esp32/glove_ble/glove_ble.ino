@@ -124,9 +124,9 @@
 #if HAND_LED_PIN == 12
   #error "HAND_LED_PIN 12 is the flash-voltage strap (MTDI) - use 27 or 19"
 #endif
-// Sewn-in and diffused by two layers of fabric, so it needs less than the
-// bare one on the board to read at the same strength.
-#define HAND_LED_MAX 48
+// Sewn in under two layers of fabric. 48 read as off at the laptop's dimmer
+// levels, and 255 is more current than this rail should carry for an indicator.
+#define HAND_LED_MAX 120
 #define I2S_SCK     33
 #define I2S_WS      25
 #define I2S_SD      32
@@ -221,6 +221,9 @@ class ServerCallbacks : public BLEServerCallbacks {
     // connection after the first until the board reboots.
     if (sensorCccd) sensorCccd->setNotifications(false);
     if (audioCccd) audioCccd->setNotifications(false);
+    // Nobody is describing the music any more, so stop showing the last colour:
+    // it read as still being connected.
+    handPkt[2] = PAT_OFF;
     srv->getAdvertising()->start();  // let the laptop reconnect
   }
 };
@@ -328,13 +331,20 @@ void setLed(uint8_t r, uint8_t g, uint8_t b) {
 //   fast red blink   sensor stalled — the watchdog below is trying to recover
 //   dim green        idle, laptop connected
 //   dim blue pulse   idle, advertising and waiting to be connected to
-void updateLed() {
+void statusColour(uint8_t low, uint8_t high, uint8_t &r, uint8_t &g, uint8_t &b) {
   uint32_t t = millis();
-  if (ledMode == 1) setLed(LED_HIGH, 0, 0);
-  else if (ledMode == 2) setLed(0, 0, (t / 400) % 2 ? LED_HIGH : 0);
-  else if (ledMode == 3) setLed((t / 120) % 2 ? LED_HIGH : 0, 0, 0);
-  else if (deviceConnected) setLed(0, LED_LOW, 0);
-  else setLed(0, 0, (t / 900) % 2 ? LED_LOW : 0);
+  r = g = b = 0;
+  if (ledMode == 1) r = high;
+  else if (ledMode == 2) b = (t / 400) % 2 ? high : 0;
+  else if (ledMode == 3) r = (t / 120) % 2 ? high : 0;
+  else if (deviceConnected) g = low;
+  else b = (t / 900) % 2 ? low : 0;
+}
+
+void updateLed() {
+  uint8_t r, g, b;
+  statusColour(LED_LOW, LED_HIGH, r, g, b);
+  setLed(r, g, b);
 }
 
 // ---- the LED sewn into the glove ----------------------------------------
@@ -372,6 +382,19 @@ static float accent(float p) {
 void updateHandLed() {
   uint8_t pat = handPkt[2];
   uint32_t now = millis();
+
+#ifndef HAND_VOICE
+  // The instrument glove has no LED on GPIO23, so this is the only one it can
+  // speak through. It shows the status colours until the laptop sends a colour,
+  // and again whenever the glove has something to say that the laptop cannot
+  // know: recording, sending a take, or a stalled sensor.
+  if (ledMode != 0 || pat == PAT_OFF) {
+    uint8_t r, g, b;
+    statusColour(HAND_LED_MAX / 2, HAND_LED_MAX, r, g, b);
+    writePixel(HAND_LED_PIN, 1, r, g, b);
+    return;
+  }
+#endif
 
   // Where the loop is *now*, carried on from the last packet. Interpolating
   // locally is what keeps the beat smooth: the laptop only has to resync
