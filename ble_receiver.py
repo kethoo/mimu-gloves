@@ -134,6 +134,11 @@ def solo_pulldown(straight: float) -> float:
     return SOLO_FLEX_KOHM[0] * straight / max(4095.0 - straight, 1.0)
 
 
+# A take has stopped arriving after this long with no audio packets, and is kept
+# if at least this much of it came through.
+AUDIO_STALL_S = 0.5
+AUDIO_MIN_FRACTION = 0.5
+
 FLEX_INVERT = True  # bending increases resistance -> lowers the divider voltage
 # True on this build: the sensor on GPIO34 is taped to the MIDDLE finger and
 # the one on GPIO35 to the index, which is the opposite of what the mapping
@@ -490,6 +495,7 @@ class BleGloveSource(GloveSource):
         self._warned_pktlen = False
         # Audio arriving from the glove's own microphone.
         self._audio_expected = 0
+        self._audio_at = 0.0
         self._audio_rate = 16000
         self._audio_parts: list[bytes] = []
 
@@ -660,30 +666,57 @@ class BleGloveSource(GloveSource):
 
     def _on_audio(self, _handle, data: bytearray) -> None:
         """Reassemble a take from the glove: a 12-byte header, then raw
-        little-endian int16 samples."""
-        if not self._audio_expected and len(data) >= 12 and data[:4] == b"AUD0":
+        little-endian int16 samples.
+
+        Notifications are unacknowledged, so one can be lost. A header always
+        starts a new take, and _finish_stalled_take ends one that stops short:
+        waiting for every last byte left a take that lost a packet never
+        playing, with each later header swallowed as more of its audio.
+        """
+        if len(data) >= 12 and data[:4] == b"AUD0":
             n, rate = struct.unpack("<II", bytes(data[4:12]))
-            self._audio_expected = n * 2
-            self._audio_rate = rate
-            self._audio_parts = []
-            print(f"\n[glove recording: {n / rate:.1f}s incoming...]")
-            return
+            if len(data) == 12:
+                if self._audio_expected:
+                    self._finish_take()
+                self._audio_expected = n * 2
+                self._audio_rate = rate
+                self._audio_parts = []
+                self._audio_at = time.monotonic()
+                print(f"\n[glove recording: {n / rate:.1f}s incoming...]")
+                return
         if not self._audio_expected:
             return
+        self._audio_at = time.monotonic()
         self._audio_parts.append(bytes(data))
-        if sum(len(p) for p in self._audio_parts) < self._audio_expected:
-            return
+        if sum(len(p) for p in self._audio_parts) >= self._audio_expected:
+            self._finish_take()
 
-        raw = b"".join(self._audio_parts)[: self._audio_expected]
-        self._audio_expected = 0
+    def _finish_stalled_take(self) -> None:
+        """Called per sensor packet. The glove only resumes those once it has
+        sent the whole take, so nothing more is coming."""
+        if self._audio_expected and time.monotonic() - self._audio_at > AUDIO_STALL_S:
+            self._finish_take()
+
+    def _finish_take(self) -> None:
+        raw = b"".join(self._audio_parts)
+        expected, self._audio_expected = self._audio_expected, 0
+        self._audio_parts = []
+        got = min(len(raw), expected)
+        short = 1.0 - got / expected if expected else 0.0
+        if got < 2 or got / expected < AUDIO_MIN_FRACTION:
+            print(f"[glove recording failed: only {got * 100 // expected}% arrived "
+                  "over Bluetooth — nothing changed]")
+            return
+        raw = raw[:got - got % 2]
         samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-        peak = float(np.abs(samples).max()) if len(samples) else 0.0
+        peak = float(np.abs(samples).max())
         if peak < 0.005:
             print("[glove recording was silent — discarded]")
             return
         self.audio = (samples, self._audio_rate)
+        lost = f", {short:.0%} lost over Bluetooth" if short > 0.001 else ""
         print(f"[glove recording received: {len(samples) / self._audio_rate:.1f}s, "
-              f"peak {peak:.2f} — now playing as the loop]")
+              f"peak {peak:.2f}{lost} — now playing as the loop]")
 
     def _reset_pose_calibration(self) -> None:
         """Forget the neutral pose so the next packets re-establish it.
@@ -695,6 +728,7 @@ class BleGloveSource(GloveSource):
         self._presses = None  # re-seed from the first packet of this session
 
     def _on_packet(self, _handle, data: bytearray) -> None:
+        self._finish_stalled_take()
         # 40 bytes = current firmware (adds the scene-press counter);
         # 36/32/28/24 are older builds and still decode.
         flex_raw = flex2_raw = None
