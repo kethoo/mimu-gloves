@@ -314,6 +314,7 @@ class GloveSynth:
         self._seek_fade = 1.0       # 0..1 fade-in after a seek
         self.loop_on = False
         self.loop_label = "glove take"   # what the panel calls what is loaded
+        self.take_status = ""            # how the last take ended, for the page
         self._loop_buf: np.ndarray | None = None
         self._loop_pos = 0.0
         self._rec_stream: sd.InputStream | None = None
@@ -827,12 +828,22 @@ class GloveSynth:
         self._rec_stream.stop()
         self._rec_stream.close()
         self._rec_stream = None
+        # Every way this can end says so on the page as well as in the
+        # terminal. A take that is thrown away is the one outcome you most
+        # need told about, and it was the one that only ever appeared in a
+        # console nobody is looking at while playing: from the browser it
+        # looked like pressing the button had simply done nothing.
         if not self._rec_chunks:
+            self.take_status = "nothing recorded — the microphone sent no audio"
             print("\n[nothing recorded]")
             return
         take = np.concatenate(self._rec_chunks)[:, 0]
         peak = float(np.abs(take).max())
         if peak < 1e-3:
+            self.take_status = (
+                f"take discarded: almost silent (peak {peak:.5f}). "
+                "Check mic permission in System Settings > Privacy & "
+                "Security > Microphone")
             print(
                 "\n[take was almost silent (peak "
                 f"{peak:.5f}) — discarded. Check mic permission in "
@@ -848,6 +859,8 @@ class GloveSynth:
             # wrapping around, then swap the copy in.
             self.add_track(take, f"take {len(self._tracks) + 1}",
                            at=self._overdub_from)
+            self.take_status = (f"layer {len(self._tracks)} added — "
+                                f"{len(self._tracks)} layers now")
             print(f"\n[layer {len(self._tracks)} added — "
                   f"{self.layer_summary()}]")
         else:
@@ -856,6 +869,12 @@ class GloveSynth:
             self._loop_pos = 0.0
             self._shot = None
             self.add_track(take, "take 1")
+            # Said plainly, because this is the button people reach for when
+            # they meant to add: a new take starts the stack over, and the
+            # layers that were there are gone.
+            self.take_status = (
+                f"take 1 recorded, {len(take) / SAMPLE_RATE:.1f}s — this "
+                "replaced the stack. Use Overdub to add a layer instead")
             print(f"\n[{len(take) / SAMPLE_RATE:.1f}s recorded — looping; move your hand to shape it]")
 
     # ---- layers ---------------------------------------------------------

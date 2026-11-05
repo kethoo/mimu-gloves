@@ -351,6 +351,13 @@
   input[type=text]::placeholder { color: var(--dim); }
   /* Status of a song load: dim while idle, accent on success, hot on
      failure — the three things worth telling apart at a glance. */
+  /* What became of the last take. Same three states as the song line:
+     ordinary news is dim, a discarded take is hot, because that one is the
+     difference between "nothing happened" and "your microphone is muted". */
+  #takestatus { font-size: 13px; color: var(--dim); margin-top: 10px;
+                line-height: 1.5; }
+  #takestatus.bad { color: var(--hot); }
+  #takestatus.ok  { color: var(--accent); }
   #songstatus { font-size: 13px; color: var(--dim); margin-top: 8px;
                 min-height: 18px; word-break: break-word; }
   #songstatus.ok  { color: var(--accent); }
@@ -694,6 +701,7 @@
           <button class="mode" data-ev="export" id="b-export" data-icon="export"
                   data-name="Export loop" data-desc="save the take"></button>
         </div>
+        <div id="takestatus"></div>
       </div>
 
       <div class="modegroup">
@@ -2074,6 +2082,12 @@ function render(s) {
     const txt = s.song_status || "";
     setSongStatus(txt, s.song_busy ? "busy"
                      : txt.startsWith("failed") ? "bad" : txt ? "ok" : "");
+  }
+  if (s.take_status !== undefined) {
+    const t = $("takestatus");
+    t.textContent = s.take_status || "";
+    t.className = !s.take_status ? ""
+                : /discarded|nothing recorded/.test(s.take_status) ? "bad" : "ok";
   }
   $("recinfo").textContent = s.recording ? "● REC" : "";
 }

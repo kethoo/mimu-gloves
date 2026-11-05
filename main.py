@@ -840,6 +840,7 @@ def main() -> None:
                     "session": synth.is_recording_session,
                     "session_secs": round(synth.session_seconds, 1),
                     "tracks": synth.tracks_state(),
+                    "take_status": synth.take_status,
                     "recording": synth.is_recording,
                     "live": synth.live_on,
                     "loop_secs": synth.loop_seconds,
