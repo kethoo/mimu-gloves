@@ -29,7 +29,19 @@ SAMPLE_RATE = 44100
 # Named for what they do to the sound, not for the algorithm behind them.
 # The order is the order they appear in the panel.
 EFFECTS = LAYER_FX = ("reverb", "echo", "octave up", "octave down",
-                      "reverse", "darken")
+                      "reverse", "darken", "granular", "harmony")
+
+# Harmony stacks a third and a fifth, and which third depends on the key the
+# scene is playing in — a major third over a minor scene is simply wrong.
+# Mirrors HARMONY_INTERVALS in synth.py, which is where the live mode reads
+# the same numbers from.
+HARMONY_INTERVALS = {
+    "pentatonic": (3, 7),
+    "minor":      (3, 7),
+    "dorian":     (3, 7),
+    "whole":      (4, 8),
+}
+HARMONY_GAIN = 0.55
 
 
 def _wrap(fn):
@@ -191,6 +203,47 @@ def _pitch(x: np.ndarray, ratio: float) -> np.ndarray:
     return _stretch(slowed, n)
 
 
+def _granular(x: np.ndarray) -> np.ndarray:
+    """A cloud of short grains in place of a continuous line.
+
+    The same 90 ms grain and 45 ms hop the live mode uses, but the grains
+    are scattered rather than taken in order: each is pulled from within a
+    tenth of a second of where it belongs, so the material smears into a
+    texture instead of simply playing. Seeded, because a layer has to sound
+    the same the next time the chain is rendered — taking a later effect off
+    must not also re-roll this one.
+    """
+    n = len(x)
+    grain = int(0.09 * SAMPLE_RATE)
+    hop = grain // 2
+    if n < grain * 2:
+        return x.copy()
+    rng = np.random.default_rng(20251105)
+    jitter = int(0.1 * SAMPLE_RATE)
+    win = np.hanning(grain)
+    out = np.zeros(n)
+    norm = np.zeros(n) + 1e-9
+    for pos in range(0, n - grain, hop):
+        src = (pos + int(rng.integers(-jitter, jitter))) % (n - grain)
+        out[pos:pos + grain] += x[src:src + grain] * win
+        norm[pos:pos + grain] += win
+    return out / norm
+
+
+def _harmony(x: np.ndarray, scale: str = "minor") -> np.ndarray:
+    """The layer with a third and a fifth stacked on it, from its own scale.
+
+    Under the original rather than beside it: a harmony that matches the
+    line in level stops sounding like harmony and starts sounding like
+    three takes of the same part.
+    """
+    third, fifth = HARMONY_INTERVALS.get(scale, HARMONY_INTERVALS["minor"])
+    out = x.copy()
+    for semi in (third, fifth):
+        out = out + HARMONY_GAIN * _pitch(x, 2.0 ** (semi / 12.0))
+    return out
+
+
 _RENDER = {
     "reverb":      _reverb,
     "echo":        _echo,
@@ -198,10 +251,14 @@ _RENDER = {
     "octave down": lambda x: _pitch(x, 0.5),
     "reverse":     _reverse,
     "darken":      _darken,
+    "granular":    _granular,
+    "harmony":     _harmony,
 }
+# The ones that need to know what key the scene is in.
+_NEEDS_SCALE = {"harmony"}
 
 
-def render(src: np.ndarray, chain) -> np.ndarray:
+def render(src: np.ndarray, chain, scale: str = "minor") -> np.ndarray:
     """The recording with its list of effects applied, in order.
 
     Always from the untouched source, never from the last result: that is
@@ -214,7 +271,7 @@ def render(src: np.ndarray, chain) -> np.ndarray:
         fn = _RENDER.get(name)
         if fn is None:
             continue
-        out = fn(out)
+        out = fn(out, scale) if name in _NEEDS_SCALE else fn(out)
     peak = float(np.abs(out).max()) if len(out) else 0.0
     # Effects add energy — a reverb and an echo together comfortably double
     # it. Held to where it started so adding one does not also turn the

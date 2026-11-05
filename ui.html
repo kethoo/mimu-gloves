@@ -218,6 +218,14 @@
                           border-color: #ff8585; box-shadow: none; }
   .layer .pill.on::after { content: "\00d7"; font-size: 13px; line-height: 1;
                            opacity: .75; }
+  /* The hand's modes, not the layer's: dashed and hollow, because they are
+     here for as long as the mode is on and then gone, and nothing about
+     this row decided them. */
+  .layer .pill.live { border-style: dashed; cursor: default; font-weight: 500;
+                      color: hsl(var(--h) 60% 70%);
+                      border-color: hsl(var(--h) 55% 48%);
+                      background: transparent; }
+  .layer .pill.live::before { content: "~ "; opacity: .7; }
   .modegrid { display: grid; grid-template-columns: repeat(3, 1fr);
               gap: 0; margin-top: 14px; }
   @media (max-width: 900px) { .modegrid { grid-template-columns: 1fr; } }
@@ -702,9 +710,10 @@
       Each take is kept on its own. <b>M</b> drops one out of the mix,
       <b>S</b> plays it alone, <b>FX</b> takes it off the hand's effects so
       it plays clean while the rest are shaped, <b>×</b> removes it for good.
-      The coloured pills are rendered into that layer and stay with it —
-      click one to put it on, click it again to take it off. Bounce flattens
-      every layer into one.
+      The filled pills are rendered into that layer and stay with it — click
+      one to put it on, click it again to take it off. A dashed pill is the
+      hand's own Texture mode passing through, on every layer that still has
+      FX on. Bounce flattens every layer into one.
     </div>
   </div>
 
@@ -1086,7 +1095,16 @@ function setSongStatus(text, cls) {
 // The number is the hue the pill takes when the effect is on, far enough
 // apart that two lit pills on one row are told apart at a glance.
 const LAYER_FX = [["reverb", 190], ["echo", 265], ["octave up", 45],
-                  ["octave down", 18], ["reverse", 320], ["darken", 140]];
+                  ["octave down", 18], ["reverse", 320], ["darken", 140],
+                  ["granular", 95], ["harmony", 215]];
+// The hand's own modes. These are not rendered into a layer — they are the
+// Texture panel, live, and they reach every layer that still has FX on. Shown
+// on those rows as ghosts so it is clear which layers they are landing on,
+// and which are sitting them out. Slices and Freeze are moments rather than
+// settings and belong to the gesture, not to a layer, so they are not here.
+const LIVE_MODES = [["granular", "granular", 95], ["harmony", "harmony", 215],
+                    ["reverse", "reverse", 320]];
+let LIVE_ON = { granular: false, harmony: false, reverse: false };
 const KEYS = { " ": "punch", v: "record", o: "overdub", p: "loop", g: "granular", b: "slices", m: "mute", l: "live", n: "scene", c: "recalibrate", a: "bounce", s: "session", e: "export", f: "freeze", h: "harmony", j: "reverse", k: "pitchlock" };
 const INS = ["saw", "organ", "strings", "bell", "flute", "pluck", "guitar"];
 document.addEventListener("keydown", (e) => {
@@ -2071,9 +2089,11 @@ function render(s) {
   // as they are. The chain was missing: clicking a pill changed the layer,
   // the sound followed, and the panel kept showing the old row — the effect
   // was on and there was no way to see it.
+  LIVE_ON = { granular: !!s.granular, harmony: !!s.harmony,
+              reverse: !!s.reverse };
   const sig = tracks.map(t =>
     `${t.id}${t.n}${t.label}${t.muted}${t.solo}${t.fx}${(t.chain || []).join(",")}`
-  ).join("|");
+  ).join("|") + "@" + Object.values(LIVE_ON).join("");
   const host = $("layers");
   if (host.dataset.sig !== sig) {
     host.dataset.sig = sig;
@@ -2103,6 +2123,21 @@ function render(s) {
           ? `layerfx:${t.id}:del:${i}`
           : `layerfx:${t.id}:add:${name_}`);
         fx.append(pill);
+      }
+      // What the hand is doing to this layer right now, if anything.
+      if (t.fx !== false) {
+        for (const [key, label, hue] of LIVE_MODES) {
+          if (!LIVE_ON[key]) continue;
+          if ((t.chain || []).includes(label)) continue;  // already its own
+          const ghost = document.createElement("b");
+          ghost.className = "pill live";
+          ghost.style.setProperty("--h", hue);
+          ghost.append(label);
+          ghost.title = label + " is on in the Texture panel and is reaching "
+            + "every layer with FX on. Turn FX off here to sit it out, or add "
+            + "it as a pill to keep it on this layer for good.";
+          fx.append(ghost);
+        }
       }
       row.append(n, name, fx);
       // FX is lit when the layer is NOT being effected, because that is the

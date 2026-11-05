@@ -1054,7 +1054,10 @@ class GloveSynth:
         else:
             return
         t["chain"] = chain
-        t["buf"] = layerfx.render(t["src"], chain)
+        # The scene's scale travels with it: a major third baked over a
+        # minor scene would be wrong in exactly the way the live harmony
+        # mode takes care not to be.
+        t["buf"] = layerfx.render(t["src"], chain, self.harmony_scale)
         self._remix()
         print(f"\n[{t['label']}: {' + '.join(chain) if chain else 'clean'}]")
 
