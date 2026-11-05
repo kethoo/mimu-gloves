@@ -16,3 +16,9 @@ instruments.json
 
 # Performances and exported loops — audio, not source.
 recordings/
+
+# A cover's backing part and its reference MIDI are rendered from the score
+# beside them, so the .json is the source and these are build output. Keeping
+# the audio out also keeps a transcription of someone's record out of the repo.
+covers/*.wav
+covers/*.mid
