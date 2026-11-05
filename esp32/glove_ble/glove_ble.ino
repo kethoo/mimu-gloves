@@ -126,7 +126,12 @@
 #endif
 // Sewn in under two layers of fabric. 48 read as off at the laptop's dimmer
 // levels, and 255 is more current than this rail should carry for an indicator.
-#define HAND_LED_MAX 120
+// The right glove stays at its earlier 48 until the brighter one has been judged.
+#ifdef HAND_VOICE
+  #define HAND_LED_MAX 48
+#else
+  #define HAND_LED_MAX 120
+#endif
 #define I2S_SCK     33
 #define I2S_WS      25
 #define I2S_SD      32
@@ -143,6 +148,7 @@
 // asking the BNO08x for 100 Hz on two reports wedges its SHTP transport.
 #define SAMPLE_HZ 50
 #define REPORT_US 20000  // 20 ms -> 50 Hz sensor reports
+#define STALL_RESET_MS 20000  // silence before the sensor is hard reset
 
 // No reset pin in the constructor: we drive it manually below, because the
 // BNO08x needs a long (~500 ms) settle time after reset that the library's
@@ -686,7 +692,11 @@ void readSensor() {
   if (ledMode != 1 && ledMode != 2) ledMode = (since > 1000) ? 3 : 0;
   if (since > 1000 && now > nextRetryMs) {
     nextRetryMs = now + 1000;
-    if (reEnableCount < 2) {
+    // Measured on the right glove: reports stopped while the hand lay still and
+    // flowed while it moved, and escalating after 3 s rebooted the board and
+    // dropped the laptop about every 8 s. So a quiet sensor is only re-enabled,
+    // and the reset waits until it has been silent for a long time.
+    if (since < STALL_RESET_MS) {
       reEnableCount++;
       Serial.printf("No reports for %lums - re-enabling (%d).\n",
                     (unsigned long)since, reEnableCount);
