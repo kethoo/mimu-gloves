@@ -2017,7 +2017,12 @@ function render(s) {
   // on every state message throws away the button under the pointer.
   const tracks = s.tracks || [];
   const lp = $("layerspanel");
-  lp.hidden = tracks.length < 2;
+  // Shown for a single take too, not just a stack. Hiding below two made
+  // the panel vanish the moment you deleted one of a pair, which reads as
+  // the app losing your work — and if the take left behind was the muted
+  // one, its M button went with the panel and there was no way left to
+  // bring it back: silence, with nothing on screen to undo it.
+  lp.hidden = tracks.length < 1;
   const sig = tracks.map(t => `${t.n}${t.label}${t.muted}${t.solo}`).join("|");
   const host = $("layers");
   if (host.dataset.sig !== sig) {
