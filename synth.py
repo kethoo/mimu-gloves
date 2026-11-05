@@ -103,6 +103,10 @@ VIBRATO_DEPTH = 0.02                  # max pitch swing (+/-2%, ~a third of
 
 PS_BUF = 1 << 16                     # live voice: ring buffer (~1.5 s)
 PS_WIN = 2048                        # pitch-shifter tap window (~46 ms)
+# How close to unity counts as "no shift at all". 0.004 is about 7 cents,
+# well under what anyone hears as a pitch change, and inside it the shifter
+# is faded out: see _pitch_shift for why it cannot be left running there.
+PS_UNITY = 0.004
 
 # ---- voice hand (second glove) ----------------------------------------
 # Schroeder reverb: four parallel combs summed into two series allpasses.
@@ -880,10 +884,21 @@ class GloveSynth:
             self._grains, self._shot = [], None
             return
         n = len(self._tracks[0]["buf"])
-        mix = np.zeros(n)
-        for t in live:
-            mix += t["buf"] * t["level"]
-        peak = float(np.abs(mix).max())
+        # Headroom comes from the whole stack, not from the layers that
+        # happen to be audible right now. Scaling the audible sum instead
+        # made every mute 3 dB louder for everyone else — measured — which
+        # is not what a mute does on any mixer: you take one part out and
+        # the rest stay exactly where you set them. Adding a layer still
+        # lowers the lot, and deleting one still raises them, because then
+        # the stack itself has genuinely changed.
+        full = np.zeros(n)
+        for t in self._tracks:
+            full += t["buf"] * t["level"]
+        mix = full.copy()
+        for t in self._tracks:
+            if not self._audible(t):
+                mix -= t["buf"] * t["level"]
+        peak = float(np.abs(full).max())
         if peak > 0.9:
             mix *= 0.9 / peak
         self._loop_buf = mix
@@ -1534,7 +1549,25 @@ class GloveSynth:
             g = np.sin(np.pi * p)
             shifted += tap * g
             gain_sum += g
-        return shifted / (gain_sum + 1e-6)
+        shifted /= gain_sum + 1e-6
+
+        # At unity there is nothing to shift, and the algorithm stops being a
+        # copier and becomes a comb filter: dphi is zero, so the window phase
+        # freezes, the two taps sit at a fixed distance apart for good, and
+        # the crossfade that exists to hide the tap wrap never runs. What
+        # comes out is the input summed with itself a few hundred samples
+        # late, coloured by wherever the phase happened to stop — and at a
+        # loop wrap the two taps straddle the seam and disagree, which was
+        # measured as a 0.17 step with the loop playing at normal speed.
+        #
+        # Faded to dry instead. The band is a few cents wide, so no shift a
+        # hand can ask for is touched, and crossing it is a crossfade rather
+        # than a switch: the shifter runs ~25 ms behind, and swapping between
+        # the two in one sample would trade the comb for a click.
+        if abs(ratio - 1.0) < PS_UNITY:
+            wet = abs(ratio - 1.0) / PS_UNITY
+            shifted = shifted * wet + x * (1.0 - wet)
+        return shifted
 
     def _noise_gate(self, x: np.ndarray) -> np.ndarray:
         """Door opens for speech, stays shut for room hiss — which would
