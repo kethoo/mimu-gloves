@@ -1270,30 +1270,7 @@ class GloveSynth:
         if buf is not None and len(buf) > 1:
             voice = None
             if self.loop_on:
-                if self.harmony_on:
-                    # Harmony is about the phrase, not about one moment, so
-                    # it walks through the take at the loop's own rate rather
-                    # than standing wherever the hand last pointed, the way
-                    # granular does. Without this it holds one chord for as
-                    # long as the hand is still, which reads as stuck.
-                    # A wrist move still seeks, exactly as in plain playback.
-                    self._rate += (self.target_rate - self._rate) * k
-                    self._scrub += (self.target_scrub - self._scrub) * 0.25
-                    if abs(self._scrub - self._scrub_held) > SEEK_MIN_MOVE:
-                        self._scrub_held = self._scrub
-                        self._loop_pos = self._scrub * (len(buf) - 1)
-                    third, fifth = HARMONY_INTERVALS.get(
-                        self.harmony_scale, HARMONY_INTERVALS["minor"])
-                    voice = self._render_grains(
-                        buf, frames,
-                        ratios=(1.0, 2.0 ** (third / 12.0), 2.0 ** (fifth / 12.0)),
-                        gains=(HARMONY_TRIM, HARMONY_GAIN * HARMONY_TRIM,
-                               HARMONY_GAIN * HARMONY_TRIM),
-                        at=self._loop_pos)
-                    step = -self._rate if self.reverse else self._rate
-                    self._loop_pos = float(
-                        (self._loop_pos + step * frames) % len(buf))
-                elif self.granular_on:
+                if self.granular_on and not self.harmony_on:
                     voice = self._render_grains(buf, frames)
                 else:
                     # Variable-rate loop (tilt = speed & pitch), linear interp.
@@ -1337,6 +1314,23 @@ class GloveSynth:
                             self._seek_fade + step * np.arange(frames), 1.0)
                         voice = voice * ramp
                         self._seek_fade = float(ramp[-1])
+                    if self.harmony_on:
+                        # The take itself plays whole, and only the added
+                        # notes are grains. Chopping the original as well made
+                        # the voice buzz at the grain rate. The original's
+                        # pitch follows the rate, so the added notes are read
+                        # at that rate too or the chord would go out of tune
+                        # whenever the hand tilts.
+                        third, fifth = HARMONY_INTERVALS.get(
+                            self.harmony_scale, HARMONY_INTERVALS["minor"])
+                        speed = abs(self._rate)
+                        added = HARMONY_GAIN * HARMONY_TRIM
+                        voice = voice * HARMONY_TRIM + self._render_grains(
+                            buf, frames,
+                            ratios=(speed * 2.0 ** (third / 12.0),
+                                    speed * 2.0 ** (fifth / 12.0)),
+                            gains=(added, added),
+                            at=self._loop_pos)
                     self._loop_pos = float(
                         (self._loop_pos + rate * frames) % len(buf)
                     )
