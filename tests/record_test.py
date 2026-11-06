@@ -4,7 +4,7 @@ Flash esp32/rec_test first, then run this, hold the glove's button and speak.
 The take is transferred over serial, saved as a WAV and played, so you can
 hear exactly what the microphone captured.
 
-    python record_test.py
+    python -m tests.record_test
 """
 
 from __future__ import annotations

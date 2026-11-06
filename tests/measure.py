@@ -1,6 +1,6 @@
 """Measure the three things the project promised to measure.
 
-    python measure.py
+    python -m tests.measure
 
 The proposal set four success criteria: gesture recognition, response time,
 stability under long use, and subjective usability. The first three are
@@ -30,10 +30,10 @@ def quiet():
     with contextlib.redirect_stdout(buf):
         yield
 
-import loop_mapping
-import mapping
-import synth as S
-from sensors import SensorFrame
+from glove import loop_mapping
+from glove import mapping
+import glove.synth as S
+from glove.sensors import SensorFrame
 
 BLOCK = 256
 DEADLINE_MS = BLOCK / S.SAMPLE_RATE * 1000.0

@@ -6,13 +6,13 @@ difference between "the span looks small" and knowing exactly which counts a
 fully bent finger produces on THIS glove, how much the reading drifts while
 you hold still, and whether the dropouts are single spikes or bursts.
 
-    python flexlog.py                 whichever glove is advertising
-    python flexlog.py --instrument    the instrument hand (MIMU-GLOVE-I)
-    python flexlog.py --voice         the voice hand (MIMU-GLOVE-V)
+    python -m tools.flexlog                 whichever glove is advertising
+    python -m tools.flexlog --instrument    the instrument hand (MIMU-GLOVE-I)
+    python -m tools.flexlog --voice         the voice hand (MIMU-GLOVE-V)
 
 It prompts for one pose at a time and counts down while it samples. Follow
 the prompts; the whole routine takes about a minute. The trace lands in
-flexlog.csv, and `python flexlog.py --report flexlog.csv` reads it back.
+flexlog.csv, and `python -m tools.flexlog --report flexlog.csv` reads it back.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import sys
 import time
 
 # Shared with the receiver so this agrees with what main.py actually rejects.
-from ble_receiver import FLEX_VALID_MIN
+from glove.ble_receiver import FLEX_VALID_MIN
 
 CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 DEVICE_NAME = "MIMU-GLOVE"
@@ -235,7 +235,7 @@ def _summarise(rows) -> None:
 async def record() -> None:
     from bleak import BleakClient
 
-    from ble_receiver import _Discovery
+    from glove.ble_receiver import _Discovery
 
     name = DEVICE_NAME
     if "--voice" in sys.argv:

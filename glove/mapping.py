@@ -52,8 +52,8 @@ from __future__ import annotations
 
 import math
 
-from sensors import SensorFrame
-from synth import GloveSynth
+from glove.sensors import SensorFrame
+from glove.synth import GloveSynth
 
 # Scales as MIDI note numbers, low to high. A scene picks one.
 SCALES = {

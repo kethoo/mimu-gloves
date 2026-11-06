@@ -196,7 +196,7 @@ class Sequencer:
                 return
             self.restart()
 
-        from mapping import midi_to_hz
+        from glove.mapping import midi_to_hz
 
         fired = False
         while self._i < len(self.melody.notes):

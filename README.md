@@ -105,17 +105,15 @@ ESP32 + BNO08x ── Bluetooth LE, 50 Hz ──> ble_receiver.py ──┐
 keyboard / browser ─────────────────────> sensors, web ─────┘   100 Hz     44.1 kHz
 ```
 
-| File | What it does |
+| Folder | What is in it |
 | --- | --- |
 | `main.py` | Starts everything and runs the control loop |
-| `synth.py` | Instruments, filter, effects, looper and layers |
-| `layerfx.py` | Effects applied to a single layer |
-| `mapping.py`, `loop_mapping.py` | Turn gestures into sound settings, one file per hand |
-| `ble_receiver.py`, `sensors.py`, `web_source.py` | Glove, keyboard and browser input |
-| `instruments.py` | Designed instruments |
-| `song.py`, `melody.py`, `cover.py`, `midi_out.py` | Songs, MIDI and backing layers |
-| `ui.html` | Browser panel |
-| `esp32/glove_ble/` | Glove firmware |
+| `glove/` | The instrument: `synth.py`, `layerfx.py`, `mapping.py`, `loop_mapping.py`, `ble_receiver.py`, `sensors.py`, `web_source.py`, `instruments.py`, `song.py`, `melody.py`, `cover.py`, `midi_out.py`, `ui.html` |
+| `esp32/` | Glove firmware, in `glove_ble/`, and small test sketches |
+| `tools/` | Helpers, run from the top folder, such as `python -m tools.calibrate_flex` |
+| `tests/` | Measurements, such as `python -m tests.measure` |
+| `covers/` | Song scores ready to play |
+| `docs/` | Images and longer guides |
 
 ## Hardware
 
@@ -153,8 +151,8 @@ arduino-cli compile --upload -p /dev/cu.usbserial-XXX \
 
 ## More
 
-- [THREE-SENSORS.md](THREE-SENSORS.md): running with one sensor on the right hand
-- [renewed-design.md](renewed-design.md): why the hands are shaped this way
+- [Gesture guide](docs/gestures-guide.md): how to play it
+- [Design notes](docs/renewed-design.md): why the hands are shaped this way
 
 ## Libraries
 

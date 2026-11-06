@@ -1,8 +1,8 @@
 """Measure the right glove's middle finger: straight, bent, and how steady.
 
-    python calibrate_flex.py
+    python -m tools.calibrate_flex
 
-    python calibrate_flex.py --watch
+    python -m tools.calibrate_flex --watch
 
 Stop main.py first, because a glove takes one connection at a time. Follow the
 prompts, then start main.py again; it reads the result from flex-cal.json.
@@ -19,7 +19,7 @@ import time
 
 from bleak import BleakClient, BleakScanner
 
-from ble_receiver import (CHAR_UUID, FLEX_VALID_MIN, flex_kohm, save_flex_cal,
+from glove.ble_receiver import (CHAR_UUID, FLEX_VALID_MIN, flex_kohm, save_flex_cal,
                           solo_pulldown)
 
 GLOVE = "MIMU-GLOVE-V"

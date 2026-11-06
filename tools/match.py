@@ -1,7 +1,7 @@
 """Design an instrument that matches the tone of a recording.
 
-    python match.py song.wav --start 160 --seconds 6 --name "Haze"
-    python match.py "https://..." --start 160 --seconds 6
+    python -m tools.match song.wav --start 160 --seconds 6 --name "Haze"
+    python -m tools.match "https://..." --start 160 --seconds 6
 
 Guessing at a patch by ear and by description does not converge: this
 measures instead. It takes the average spectral shape of a passage, searches
@@ -22,9 +22,9 @@ import contextlib
 
 import numpy as np
 
-import instruments
-import song as song_loader
-import synth as S
+from glove import instruments
+import glove.song as song_loader
+import glove.synth as S
 
 # Log-spaced bands from the bottom of a bass note to the top of what a
 # speaker reproduces. Comparing band energies rather than raw bins is what

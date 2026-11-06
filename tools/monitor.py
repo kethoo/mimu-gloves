@@ -4,9 +4,9 @@ macOS renames the port every time the board re-enumerates
 (/dev/cu.usbserial-10, -110, ...), so this finds it instead of hardcoding it,
 and waits for the board if it is unplugged.
 
-    python monitor.py           watch forever (Ctrl+C to stop)
-    python monitor.py 20        watch for 20 seconds
-    python monitor.py --identify   which glove is on which port
+    python -m tools.monitor           watch forever (Ctrl+C to stop)
+    python -m tools.monitor 20        watch for 20 seconds
+    python -m tools.monitor --identify   which glove is on which port
 """
 
 from __future__ import annotations

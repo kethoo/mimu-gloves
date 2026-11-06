@@ -1,6 +1,6 @@
 """Walk the layering flow and measure that each layer is really isolated.
 
-    python layers_test.py
+    python -m tests.layers_test
 
 The flow this checks is the one you perform: record a phrase, overdub a
 second on top of it, overdub a third, then take one of them out again and
@@ -25,7 +25,7 @@ import io
 
 import numpy as np
 
-import synth as S
+import glove.synth as S
 
 TAKES = [("take 1", 220.0), ("take 2", 330.0), ("take 3", 440.0)]
 SECONDS = 2.0

@@ -1,6 +1,6 @@
 """Turn a passage of a record into something you can cover on the gloves.
 
-    python cover.py track.mp3 --start 160 --seconds 16.5 --name "Posthumous"
+    python -m glove.cover track.mp3 --start 160 --seconds 16.5 --name "Posthumous"
     python main.py --ble --web --cover covers/posthumous.json
 
 `--song` puts a record in the loop buffer: you can scrub it, freeze it and
@@ -523,7 +523,7 @@ def main() -> None:
                     help="which glove instrument plays the lead")
     args = ap.parse_args()
 
-    import song as song_loader
+    import glove.song as song_loader
     samples, rate, label, _artist = song_loader.load(
         args.source, start=args.start, seconds=args.seconds)
     print(f"\nmeasuring {label}  {args.start:g}s..{args.start + args.seconds:g}s\n")
@@ -531,7 +531,7 @@ def main() -> None:
     score = transcribe(samples, rate, args.name, args.start, args.instrument)
     score["source"] = label
 
-    out = pathlib.Path(__file__).parent / "covers"
+    out = pathlib.Path(__file__).parent.parent / "covers"
     out.mkdir(exist_ok=True)
     slug = "".join(c.lower() if c.isalnum() else "-" for c in args.name).strip("-")
     jpath = out / f"{slug}.json"

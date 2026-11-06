@@ -70,7 +70,7 @@ SESSION_MAX = 10 * 60 * SAMPLE_RATE
 
 
 def _recordings_dir() -> pathlib.Path:
-    d = pathlib.Path(__file__).parent / "recordings"
+    d = pathlib.Path(__file__).parent.parent / "recordings"
     d.mkdir(exist_ok=True)
     return d
 
@@ -300,7 +300,7 @@ class GloveSynth:
         self.drone_on = False
         # Instruments you designed, loaded from instruments.json. Read before
         # the first note, because envelope() consults it on every block.
-        import instruments as _instruments
+        import glove.instruments as _instruments
 
         self.customs = _instruments.load()
         # Muted on purpose, as opposed to merely gated off. Loading a record
@@ -631,8 +631,7 @@ class GloveSynth:
                 patch["struck"])
 
     def reload_customs(self) -> None:
-        import instruments
-
+        from glove import instruments
         self.customs = instruments.load()
         if self.instrument not in INSTRUMENTS and self.instrument not in self.customs:
             self.set_instrument("saw", announce=False)
@@ -1027,8 +1026,7 @@ class GloveSynth:
         one, which is the whole reason these are a property of the layer
         rather than another thing the hand is holding.
         """
-        import layerfx
-
+        from glove import layerfx
         idx = next((i for i, tr in enumerate(self._tracks)
                     if tr["id"] == ident), None)
         if idx is None:

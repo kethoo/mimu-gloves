@@ -69,7 +69,7 @@ just ring.
 
 **Which glove is which:** the boards advertise as `MIMU-GLOVE-I` (live) and
 `MIMU-GLOVE-V` (loop). Check with `python main.py --scan`, or
-`python monitor.py --identify` over USB.
+`python -m tools.monitor --identify` over USB.
 
 ---
 

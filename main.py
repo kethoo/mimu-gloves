@@ -25,7 +25,7 @@ explicitly:
     python main.py --audio-out AirPods --audio-in "MacBook Air Microphone"
 
 To cover a piece of music, measure it once with cover.py and then play it:
-    python cover.py track.mp3 --start 160 --seconds 16 --name "Posthumous"
+    python -m glove.cover track.mp3 --start 160 --seconds 16 --name "Posthumous"
     python main.py --ble --web --cover covers/posthumous.json
 That loops a backing part built from the measured chords, locks the hand to
 the scale the passage is in, and prints the chart. Unlike --song, none of the
@@ -45,11 +45,11 @@ import time
 import webbrowser
 import zlib
 
-import instruments as instruments_mod
-import mapping
-import loop_mapping
-from sensors import DemoGloveSource, SimulatedGloveSource
-from synth import GloveSynth
+import glove.instruments as instruments_mod
+from glove import mapping
+from glove import loop_mapping
+from glove.sensors import DemoGloveSource, SimulatedGloveSource
+from glove.synth import GloveSynth
 
 CONTROL_RATE = 100  # Hz
 
@@ -156,8 +156,7 @@ def _handle_design(msg: dict, synth) -> None:
     the audio callback reads out of synth.customs, and the store on disk is
     not safe to write from two places at once.
     """
-    import instruments
-
+    from glove import instruments
     op = msg.get("op")
     patch = msg.get("patch")
     name = (msg.get("name") or "").strip()
@@ -207,7 +206,7 @@ def _handle_design(msg: dict, synth) -> None:
             # Audition without the gloves. Every synth editor can play
             # itself; ours could only be heard by holding a fist, so you
             # edited into silence.
-            from mapping import midi_to_hz
+            from glove.mapping import midi_to_hz
 
             synth.target_freq = midi_to_hz(float(msg.get("note", 60)))
             synth.mute_instrument(False)
@@ -249,14 +248,14 @@ def _request_song(src: str, synth, state: dict) -> None:
     state["status"] = f"loading {src.split('/')[-1][:40]}..."
 
     def work() -> None:
-        import song as song_loader
+        import glove.song as song_loader
 
         try:
             # One box for both, because the file says which it is. A .mid
             # holds notes and plays through the instruments; anything else
             # is a waveform and goes in the loop buffer.
             if src.split("#")[0].lower().endswith((".mid", ".midi")):
-                import melody as melody_mod
+                import glove.melody as melody_mod
 
                 mel = melody_mod.load(src.split("#")[0])
                 state["melody"] = mel
@@ -361,7 +360,7 @@ def combo(live, loop, synth) -> None:
     # Both hands in the same posture at once: deliberate, unmistakable, and
     # impossible to hit by accident while playing. Edge-triggered so holding
     # them does not re-fire.
-    from mapping import _read_posture
+    from glove.mapping import _read_posture
 
     a = _read_posture(live.flex, live.flex2)
     b = _read_posture(loop.flex, loop.flex2)
@@ -405,7 +404,7 @@ def _pending(st, now):
 def _middle_kohm(frame, src) -> float | None:
     if not getattr(src, "solo_middle", False):
         return None
-    from ble_receiver import flex_kohm
+    from glove.ble_receiver import flex_kohm
 
     k = flex_kohm(frame.flex2_raw, src._flex2.pulldown)
     return None if k is None else round(k, 1)
@@ -492,7 +491,7 @@ def main() -> None:
     if live_side not in ("left", "right"):
         live_side = "left"
     if "--ble" in sys.argv:
-        from ble_receiver import BleGloveSource, run_gloves
+        from glove.ble_receiver import BleGloveSource, run_gloves
 
         two = "--voice-glove" in sys.argv
         # Names are overridable so a board on older, un-suffixed firmware can
@@ -555,20 +554,20 @@ def main() -> None:
         if "--web" in sys.argv:
             # Glove drives the hand; the browser supplies the buttons the
             # hardware doesn't have yet (instruments, record, modes).
-            from sensors import MergedGloveSource
-            from web_source import WebGloveSource
+            from glove.sensors import MergedGloveSource
+            from glove.web_source import WebGloveSource
 
             source = MergedGloveSource(glove, WebGloveSource())
-            webbrowser.open((pathlib.Path(__file__).parent / "ui.html").as_uri())
+            webbrowser.open((pathlib.Path(__file__).parent / "glove" / "ui.html").as_uri())
             print("Browser panel open: pick instruments and modes while you play.")
         else:
             source = glove
             print("Tip: add --web for instrument switching and voice controls.")
     elif "--web" in sys.argv:
-        from web_source import WebGloveSource
+        from glove.web_source import WebGloveSource
 
         source = WebGloveSource()
-        page = pathlib.Path(__file__).parent / "ui.html"
+        page = pathlib.Path(__file__).parent / "glove" / "ui.html"
         webbrowser.open(page.as_uri())
         print("Web frontend mode — control the glove from the browser tab.")
     elif "--demo" in sys.argv:
@@ -607,7 +606,7 @@ def main() -> None:
 
     midi = None
     if "--midi" in sys.argv:
-        from midi_out import MidiOut
+        from glove.midi_out import MidiOut
 
         midi = MidiOut(_flag_value("--midi-port"))
 
@@ -631,7 +630,7 @@ def main() -> None:
     seq = None
     mel_src = _flag_value("--melody")
     if mel_src:
-        import melody as melody_mod
+        import glove.melody as melody_mod
 
         try:
             seq = melody_mod.Sequencer(melody_mod.load(mel_src))
@@ -642,7 +641,7 @@ def main() -> None:
     song_state: dict = {"status": "", "busy": False}
     song_src = _flag_value("--song")
     if song_src:
-        import song as song_loader
+        import glove.song as song_loader
 
         try:
             samples, rate, song_name, song_artist = song_loader.load(
@@ -669,7 +668,7 @@ def main() -> None:
     # first and the cover second leaves both reachable from the button.
     cover_src = _flag_value("--cover")
     if cover_src:
-        import cover as cover_mod
+        import glove.cover as cover_mod
 
         try:
             cover_mod.install(cover_mod.load(cover_src), synth, hand, mapping)
@@ -708,7 +707,7 @@ def main() -> None:
         # separately would give bleak two concurrent loops and two scanners,
         # which is unreliable on CoreBluetooth. Both are `managed`, so their
         # own start() is a no-op and this owns them.
-        from ble_receiver import run_gloves
+        from glove.ble_receiver import run_gloves
 
         run_gloves([glove, voice_source])
     source.start()
@@ -812,7 +811,7 @@ def main() -> None:
                 _request_song(want, synth, song_state)
             new_mel = song_state.pop("melody", None)
             if new_mel is not None:
-                import melody as melody_mod
+                import glove.melody as melody_mod
 
                 seq = melody_mod.Sequencer(new_mel)
                 synth.clear_loop()   # a tune and a record at once is mud

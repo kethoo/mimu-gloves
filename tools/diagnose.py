@@ -5,9 +5,9 @@ BNO08x and how much the readings are moving, and shouts the moment the
 sensor drops out or comes back. Use it for a wiggle test: run this, then
 disturb one wire at a time and watch which one causes a dropout.
 
-    python diagnose.py              watch whichever glove is advertising
-    python diagnose.py --voice      watch the voice hand (MIMU-GLOVE-V)
-    python diagnose.py --instrument watch the instrument hand (MIMU-GLOVE-I)
+    python -m tools.diagnose              watch whichever glove is advertising
+    python -m tools.diagnose --voice      watch the voice hand (MIMU-GLOVE-V)
+    python -m tools.diagnose --instrument watch the instrument hand (MIMU-GLOVE-I)
 
 Useful when the board runs on a powerbank: there is no serial then, so this
 is the only window into whether it is booting, holding the link and sending
@@ -24,7 +24,7 @@ import time
 
 # Single source of truth for the flex thresholds — diagnose and the live
 # receiver must agree, or this reports "good" on a channel main.py rejects.
-from ble_receiver import FLEX_MIN_SPAN, FLEX_VALID_MIN
+from glove.ble_receiver import FLEX_MIN_SPAN, FLEX_VALID_MIN
 
 CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 DEVICE_NAME = "MIMU-GLOVE"   # prefix; --voice / --instrument / --name override
@@ -83,7 +83,7 @@ async def main() -> None:
 
     from bleak import BleakClient
 
-    from ble_receiver import _Discovery
+    from glove.ble_receiver import _Discovery
 
     # Which hand to watch. Defaults to the base name, which prefix-matches
     # either suffixed board or an older un-suffixed one.

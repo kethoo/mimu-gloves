@@ -41,11 +41,11 @@ is a feedback loop.
 
 from __future__ import annotations
 
-from sensors import SensorFrame
-from synth import GloveSynth
+from glove.sensors import SensorFrame
+from glove.synth import GloveSynth
 
 # Reuse the live hand's travel ranges so both gloves feel the same.
-from mapping import (
+from glove.mapping import (
     FLEX_CURVE,
     PITCH_RANGE,
     POSTURE_HOLD,

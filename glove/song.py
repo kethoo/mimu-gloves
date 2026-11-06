@@ -29,7 +29,7 @@ import tempfile
 
 import numpy as np
 
-CACHE = pathlib.Path(__file__).parent / ".song-cache"
+CACHE = pathlib.Path(__file__).parent.parent / ".song-cache"
 
 
 def _is_url(src: str) -> bool:

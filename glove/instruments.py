@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import pathlib
 
-STORE = pathlib.Path(__file__).parent / "instruments.json"
+STORE = pathlib.Path(__file__).parent.parent / "instruments.json"
 
 # Engine -> the parameters it reads, with (default, low, high) for each. The
 # UI builds its sliders from this table rather than from a hardcoded form,

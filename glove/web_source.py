@@ -14,7 +14,7 @@ import asyncio
 import json
 import threading
 
-from sensors import GloveSource, SensorFrame
+from glove.sensors import GloveSource, SensorFrame
 
 PORT = 8765
 

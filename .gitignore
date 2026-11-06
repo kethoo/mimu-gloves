@@ -25,3 +25,6 @@ covers/*.mid
 
 # A flex sensor's measured readings belong to that sensor on that glove.
 flex-cal.json
+
+# Written by tests/record_test.py.
+glove_take.wav

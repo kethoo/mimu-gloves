@@ -33,7 +33,7 @@ from collections import deque
 
 import numpy as np
 
-from sensors import GloveSource, SensorFrame
+from glove.sensors import GloveSource, SensorFrame
 
 SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
@@ -81,7 +81,7 @@ SOLO_FLEX_TRAVEL = -160.0      # counts from straight to fully bent
 SOLO_FLEX_NORMAL_MAX = 1900.0  # above this at rest, the connection is out
 SOLO_FLEX_FAULT_MARGIN = 0.25  # of a bend past straight: not the finger
 # Where calibrate_flex.py keeps the two measured readings.
-FLEX_CAL_FILE = pathlib.Path(__file__).parent / "flex-cal.json"
+FLEX_CAL_FILE = pathlib.Path(__file__).parent.parent / "flex-cal.json"
 # Above this the divider is effectively shorted to 3V3. A flex sensor cannot
 # do that by itself; it means the resistor to ground is missing or open.
 FLEX_SATURATED = 4000.0
