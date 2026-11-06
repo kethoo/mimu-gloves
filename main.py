@@ -527,20 +527,25 @@ def main() -> None:
             voice_source = BleGloveSource(
                 loop_name, tag="V:", label="loop glove", managed=True,
                 flip=flip_which == "loop", swap_flex=swap_flex,
-                solo_middle="--loop-flex-both" not in sys.argv,
+                solo_middle="--right-one-sensor" in sys.argv,
             )
             print("Connecting to BOTH gloves over BLE...")
             print(f"  live glove = {live_side.upper()} hand, "
                   f"loop glove = {loop_side.upper()} hand (mic, button, LED)")
+            print("  loop glove sensors: "
+                  + ("one, on the middle finger"
+                     if "--right-one-sensor" in sys.argv
+                     else "two  [--right-one-sensor if that glove has one]"))
             print(f"  orientation flipped on: {flip_which}"
                   + ("  [--flip-hand none|live|loop to change]"
                      if flip_which != "none" else ""))
         else:
-            # The right glove on its own is still the one-sensor glove.
+            # The right glove on its own is still the one-sensor glove, if
+            # this build of it has only the one.
             glove = BleGloveSource(
                 live_name, label="glove",
                 solo_middle=(live_name == loop_name
-                             and "--loop-flex-both" not in sys.argv))
+                             and "--right-one-sensor" in sys.argv))
             print(f"Connecting to '{live_name}' over BLE...")
             # Without this the loop hand silently falls back to the browser
             # and the panel just says "simulated", which reads as a fault

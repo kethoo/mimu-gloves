@@ -280,6 +280,7 @@ This hand never plays a note.
 
 ```bash
 python main.py --ble --voice-glove --web    # both hands
+python main.py --ble --voice-glove --web --right-one-sensor   # right glove has one flex sensor
 python main.py --scan                        # which gloves are advertising
 ```
 

@@ -1,12 +1,12 @@
 # Three sensors
 
-This branch runs the instrument with **three flex sensors instead of four**:
-both on the left hand, one on the right.
+`--right-one-sensor` runs the instrument with **three flex sensors instead of
+four**: both on the left hand, one on the right.
 
 It exists because the right glove already has a dead flex channel, and
 because a build with one fewer sensor is cheaper, simpler to sew and has one
-less thing to fail. `main` assumes four and loses all three postures on a
-hand the moment one channel goes; this branch degrades instead.
+less thing to fail. Four is the default. On a hand with one channel, this mode reads what is
+there instead of losing its postures.
 
 Reproduce every number here with `python measure.py`.
 
@@ -122,7 +122,7 @@ ground is missing or open, and it says so.
 The panel draws this: only the middle finger curls, Point is gone from that
 hand, and a badge shows what the sensor measures right now.
 
-`--loop-flex-both` puts the right glove back on two sensors.
+Four sensors are the default. `--right-one-sensor` turns all of this on.
 
 ---
 
